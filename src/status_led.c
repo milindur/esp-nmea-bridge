@@ -22,7 +22,20 @@ static const struct device *const strip;
 
 static bool status_led_running;
 static struct k_thread status_led_thread_data;
+static struct status_led_policy_state status_led_state;
+K_MUTEX_DEFINE(status_led_lock);
 K_THREAD_STACK_DEFINE(status_led_stack, 1024);
+
+static enum status_led_base_state status_led_current_base_state(void)
+{
+	enum status_led_base_state base_state;
+
+	k_mutex_lock(&status_led_lock, K_FOREVER);
+	base_state = status_led_policy_base_state(&status_led_state);
+	k_mutex_unlock(&status_led_lock);
+
+	return base_state;
+}
 
 static void status_led_thread(void *a, void *b, void *c)
 {
@@ -34,7 +47,8 @@ static void status_led_thread(void *a, void *b, void *c)
 
 	for (;;) {
 		uint32_t elapsed_ms = (uint32_t)(k_uptime_get() - started_ms);
-		struct status_led_rgb rendered = status_led_policy_render_disconnected(elapsed_ms);
+		struct status_led_rgb rendered =
+			status_led_policy_render_base(status_led_current_base_state(), elapsed_ms);
 		struct led_rgb pixel = {
 			.r = rendered.r,
 			.g = rendered.g,
@@ -48,6 +62,20 @@ static void status_led_thread(void *a, void *b, void *c)
 
 		k_sleep(K_MSEC(STATUS_LED_UPDATE_MS));
 	}
+}
+
+void status_led_tcp_nmea_session_started(void)
+{
+	k_mutex_lock(&status_led_lock, K_FOREVER);
+	status_led_policy_tcp_nmea_session_started(&status_led_state);
+	k_mutex_unlock(&status_led_lock);
+}
+
+void status_led_tcp_nmea_session_ended(void)
+{
+	k_mutex_lock(&status_led_lock, K_FOREVER);
+	status_led_policy_tcp_nmea_session_ended(&status_led_state);
+	k_mutex_unlock(&status_led_lock);
 }
 
 int status_led_start(void)

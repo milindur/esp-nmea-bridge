@@ -1,6 +1,7 @@
 #include "tcp_nmea_session.h"
 
 #include "nmea_bridge.h"
+#include "status_led.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -85,6 +86,8 @@ enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name)
 		return TCP_NMEA_SESSION_ENDED_SINK_UNAVAILABLE;
 	}
 
+	status_led_tcp_nmea_session_started();
+
 	for (;;) {
 		if (drain_socket_rx(fd, sink_name, &result)) {
 			break;
@@ -104,6 +107,7 @@ enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name)
 		}
 	}
 
+	status_led_tcp_nmea_session_ended();
 	nmea_bridge_sink_unregister(sink_id);
 	(void)zsock_close(fd);
 	return result;
