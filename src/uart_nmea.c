@@ -9,10 +9,11 @@
 
 LOG_MODULE_REGISTER(uart_nmea, LOG_LEVEL_INF);
 
-#define NMEA_UART_NODE DT_NODELABEL(uart1)
+#define NMEA_UART_NODE DT_ALIAS(serial1)
+#define NMEA_UART_NAME "serial1"
 
 #if !DT_NODE_HAS_STATUS(NMEA_UART_NODE, okay)
-#error "uart1 must be enabled in devicetree"
+#error "serial1 devicetree alias must point to an enabled UART"
 #endif
 
 static const struct device *const nmea_uart = DEVICE_DT_GET(NMEA_UART_NODE);
@@ -73,7 +74,7 @@ K_THREAD_STACK_DEFINE(uart_nmea_stack, 2048);
 int uart_nmea_start(void)
 {
 	if (!device_is_ready(nmea_uart)) {
-		LOG_ERR("uart1 is not ready");
+		LOG_ERR("%s is not ready", NMEA_UART_NAME);
 		return -ENODEV;
 	}
 
@@ -84,7 +85,7 @@ int uart_nmea_start(void)
 				NULL, NULL, NULL, 4, 0, K_NO_WAIT);
 	}
 
-	LOG_INF("UART1 NMEA RX started: RX GPIO5, 38400 baud");
+	LOG_INF("NMEA UART RX started: %s (%s)", NMEA_UART_NAME, nmea_uart->name);
 	return 0;
 }
 
