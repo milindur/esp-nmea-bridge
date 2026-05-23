@@ -1,0 +1,20 @@
+# udev rules for Waveshare ESP32-C6-DEV-KIT-N8
+#
+# The board exposes two USB CDC ACM tty devices through one USB-C connector:
+# - ESP32-C6 native USB Serial/JTAG, used for flashing/debugging
+# - CH343 USB UART, connected to UART0 and used as the Zephyr console
+#
+# Install with:
+#   sudo cp 99-waveshare-esp32c6-dev-kit-n8.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger -s tty
+#
+# Stable role symlinks:
+#   /dev/waveshare/esp32c6-dev-kit-n8/jtag  native USB Serial/JTAG flashing/debugging
+#   /dev/waveshare/esp32c6-dev-kit-n8/uart  CH343 UART0 console
+#
+# Serial-qualified symlinks are also created and are preferable when multiple
+# matching boards or adapters are connected at the same time.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ATTRS{product}=="USB JTAG/serial debug unit", SYMLINK+="waveshare/esp32c6-dev-kit-n8/jtag", SYMLINK+="waveshare/esp32c6-dev-kit-n8/jtag-$attr{serial}", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ATTRS{product}=="USB Single Serial", SYMLINK+="waveshare/esp32c6-dev-kit-n8/uart", SYMLINK+="waveshare/esp32c6-dev-kit-n8/uart-$attr{serial}", TAG+="uaccess"

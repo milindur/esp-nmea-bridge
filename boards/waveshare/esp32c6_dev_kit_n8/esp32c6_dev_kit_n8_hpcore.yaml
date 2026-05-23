@@ -1,0 +1,23 @@
+identifier: esp32c6_dev_kit_n8/esp32c6/hpcore
+name: ESP32-C6-DEV-KIT-N8 HP Core
+vendor: waveshare
+type: mcu
+arch: riscv
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - gpio
+  - watchdog
+  - uart
+  - dma
+  - pwm
+  - spi
+  - counter
+  - entropy
+  - i2c
+  - i2s
+  - netif:openthread
+  - netif:wifi
+  - crypto
+  - retained_mem
