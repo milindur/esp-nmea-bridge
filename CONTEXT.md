@@ -24,6 +24,14 @@ _Avoid_: server session
 The outbound connector that creates a TCP NMEA session to a configured host or STA gateway.
 _Avoid_: upstream session
 
+**NMEA connection state**:
+The aggregate availability of active TCP NMEA sessions for carrying NMEA frames. A listening TCP NMEA server without an active session is not connected.
+_Avoid_: Wi-Fi state, server state
+
+**NMEA forwarding activity**:
+A short-lived occurrence where an NMEA frame is received from UART or successfully sent by a TCP NMEA session.
+_Avoid_: packet activity, data event
+
 ## Example dialogue
 
 Dev: "When the TCP NMEA server accepts a peer, should it publish frames directly?"
