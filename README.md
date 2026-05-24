@@ -71,6 +71,7 @@ Important options:
 - `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE`: enable the inbound TCP NMEA server
 - `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE`: enable the outbound TCP NMEA client
 - `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST`: target IP address; leave empty to use the DHCP gateway learned on the station interface
+- `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE`: enable the optional status LED observer; it uses a `led-strip` devicetree alias when present and can be disabled with `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE=n`
 
 ## Build
 
