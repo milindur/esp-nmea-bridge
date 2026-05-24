@@ -23,20 +23,21 @@ static const struct device *const strip;
 #endif
 
 static bool status_led_running;
+static int64_t status_led_started_ms;
 static struct k_thread status_led_thread_data;
 static struct status_led_policy_state status_led_state;
 K_MUTEX_DEFINE(status_led_lock);
 K_THREAD_STACK_DEFINE(status_led_stack, 1024);
 
-static enum status_led_base_state status_led_current_base_state(void)
+static struct status_led_rgb status_led_render(uint32_t elapsed_ms)
 {
-	enum status_led_base_state base_state;
+	struct status_led_rgb rgb;
 
 	k_mutex_lock(&status_led_lock, K_FOREVER);
-	base_state = status_led_policy_base_state(&status_led_state);
+	rgb = status_led_policy_render(&status_led_state, elapsed_ms);
 	k_mutex_unlock(&status_led_lock);
 
-	return base_state;
+	return rgb;
 }
 
 static bool status_led_rgb_equal(const struct status_led_rgb *a,
@@ -67,7 +68,6 @@ static void status_led_thread(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	int64_t started_ms = k_uptime_get();
 	int64_t next_retry_ms = 0;
 	uint8_t failed_attempts = 0U;
 	bool has_applied_rgb = false;
@@ -75,9 +75,8 @@ static void status_led_thread(void *a, void *b, void *c)
 
 	for (;;) {
 		int64_t now_ms = k_uptime_get();
-		uint32_t elapsed_ms = (uint32_t)(now_ms - started_ms);
-		struct status_led_rgb rendered =
-			status_led_policy_render_base(status_led_current_base_state(), elapsed_ms);
+		uint32_t elapsed_ms = (uint32_t)(now_ms - status_led_started_ms);
+		struct status_led_rgb rendered = status_led_render(elapsed_ms);
 
 		if ((!has_applied_rgb || !status_led_rgb_equal(&rendered, &applied_rgb)) &&
 		    now_ms >= next_retry_ms) {
@@ -132,6 +131,15 @@ void status_led_tcp_nmea_client_connecting(bool connecting)
 	k_mutex_unlock(&status_led_lock);
 }
 
+void status_led_nmea_frame_received(void)
+{
+	uint32_t elapsed_ms = (uint32_t)(k_uptime_get() - status_led_started_ms);
+
+	k_mutex_lock(&status_led_lock, K_FOREVER);
+	status_led_policy_nmea_frame_received(&status_led_state, elapsed_ms);
+	k_mutex_unlock(&status_led_lock);
+}
+
 int status_led_start(void)
 {
 	if (status_led_running) {
@@ -148,6 +156,7 @@ int status_led_start(void)
 		return 0;
 	}
 
+	status_led_started_ms = k_uptime_get();
 	status_led_running = true;
 	k_thread_create(&status_led_thread_data, status_led_stack,
 		       K_THREAD_STACK_SIZEOF(status_led_stack), status_led_thread,

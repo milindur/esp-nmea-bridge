@@ -65,6 +65,65 @@ ZTEST(status_led_policy, test_connected_is_dim_steady_green)
 	zassert_equal(rgb.b, 0U);
 }
 
+ZTEST(status_led_policy, test_nmea_frame_receipt_flashes_blue)
+{
+	struct status_led_policy_state state = { 0 };
+	struct status_led_rgb rgb;
+
+	status_led_policy_nmea_frame_received(&state, 1000U);
+	rgb = status_led_policy_render(&state, 1000U);
+
+	zassert_equal(rgb.r, 0U);
+	zassert_equal(rgb.g, 0U);
+	zassert_equal(rgb.b, STATUS_LED_NMEA_ACTIVITY_BLUE);
+}
+
+ZTEST(status_led_policy, test_nmea_frame_flash_expires_to_disconnected_base)
+{
+	struct status_led_policy_state state = { 0 };
+	uint32_t expired_ms = STATUS_LED_DISCONNECTED_PERIOD_MS;
+	struct status_led_rgb rgb;
+
+	status_led_policy_nmea_frame_received(&state,
+					       expired_ms - STATUS_LED_NMEA_ACTIVITY_FLASH_MS);
+	rgb = status_led_policy_render(&state, expired_ms);
+
+	zassert_equal(rgb.r, STATUS_LED_DISCONNECTED_RED);
+	zassert_equal(rgb.g, 0U);
+	zassert_equal(rgb.b, 0U);
+}
+
+ZTEST(status_led_policy, test_nmea_frame_flash_expires_to_connecting_base)
+{
+	struct status_led_policy_state state = { 0 };
+	uint32_t expired_ms = STATUS_LED_CONNECTING_PERIOD_MS;
+	struct status_led_rgb rgb;
+
+	status_led_policy_tcp_nmea_client_connecting(&state, true);
+	status_led_policy_nmea_frame_received(&state,
+					       expired_ms - STATUS_LED_NMEA_ACTIVITY_FLASH_MS);
+	rgb = status_led_policy_render(&state, expired_ms);
+
+	zassert_equal(rgb.r, STATUS_LED_CONNECTING_RED_MIN);
+	zassert_equal(rgb.g, STATUS_LED_CONNECTING_GREEN_MIN);
+	zassert_equal(rgb.b, 0U);
+}
+
+ZTEST(status_led_policy, test_nmea_frame_flash_expires_to_connected_base)
+{
+	struct status_led_policy_state state = { 0 };
+	uint32_t expired_ms = 1000U + STATUS_LED_NMEA_ACTIVITY_FLASH_MS;
+	struct status_led_rgb rgb;
+
+	status_led_policy_tcp_nmea_session_started(&state);
+	status_led_policy_nmea_frame_received(&state, 1000U);
+	rgb = status_led_policy_render(&state, expired_ms);
+
+	zassert_equal(rgb.r, 0U);
+	zassert_equal(rgb.g, STATUS_LED_CONNECTED_GREEN);
+	zassert_equal(rgb.b, 0U);
+}
+
 ZTEST(status_led_policy, test_active_session_drives_connected_state)
 {
 	struct status_led_policy_state state = { 0 };
