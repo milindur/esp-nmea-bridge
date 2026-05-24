@@ -1,10 +1,46 @@
 # ESP NMEA Bridge
 
-ESP NMEA Bridge is a Zephyr application for an ESP32-C6 board. It reads NMEA-0183 data from UART, frames it as NMEA frames, and distributes it through the in-process NMEA bridge to TCP NMEA sessions. The application can run as a Wi-Fi SoftAP, Wi-Fi station, TCP NMEA server, and optional TCP NMEA client at the same time.
+ESP NMEA Bridge turns an ESP32-C6 board into a Wi-Fi gateway for marine NMEA-0183 data. Connect a GPS, AIS receiver, or other NMEA device over UART, and the bridge makes that data available to navigation apps and other clients over TCP. It can create its own Wi-Fi network, join an existing one, serve multiple TCP clients, and optionally forward data to another TCP server.
 
 The project also includes a board definition for the Waveshare `esp32c6_dev_kit_n8` with 8 MiB flash and optional status LED support.
 
-## Requirements
+## What it does
+
+A typical setup is:
+
+1. Connect an NMEA-0183 data source to the ESP32-C6 UART input.
+2. Power the ESP32-C6 board.
+3. Join the bridge's Wi-Fi network, or let the bridge join your existing Wi-Fi.
+4. Configure your navigation software to read NMEA-0183 data from the bridge over TCP.
+
+This is useful when you want to make serial GPS or AIS data available to software such as OpenCPN, Signal K, OpenPlotter, or another system that accepts NMEA-0183 over TCP.
+
+The bridge supports two TCP modes:
+
+- **TCP server**: navigation apps connect to the ESP32-C6 and receive NMEA data. This is the usual mode for phones, tablets, laptops, or chart plotter software.
+- **TCP client**: the ESP32-C6 connects to another TCP NMEA server and forwards data to it, for example an OpenPlotter or Signal K host.
+
+## Hardware
+
+Supported board:
+
+- Waveshare `esp32c6_dev_kit_n8` / `esp32c6_dev_kit_n8/esp32c6/hpcore`
+
+NMEA UART input on the supported board:
+
+- UART: `uart1` / devicetree alias `serial1`
+- RX: GPIO5
+- TX: GPIO4
+- Baud rate: 38400
+
+Only RX is required when the ESP32-C6 only receives NMEA data from a GPS, AIS receiver, or other instrument.
+
+> [!WARNING]
+> NMEA-0183 electrical signaling is not always 3.3 V UART. Use a suitable NMEA-0183/RS-422-to-3.3 V UART adapter when connecting real marine equipment. Do not connect higher-voltage or differential NMEA lines directly to ESP32-C6 GPIO pins.
+
+The board's USB UART remains available for the Zephyr console and flashing.
+
+## Software requirements
 
 Start with the official Zephyr Getting Started Guide:
 
@@ -34,7 +70,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip west
 
-west init -m git@github.com:milindur/esp-nmea-bridge.git --mr main
+west init -m https://github.com/milindur/esp-nmea-bridge.git --mr main
 west update
 west zephyr-export
 pip install -r zephyr/scripts/requirements.txt
@@ -56,7 +92,7 @@ west update
 west blobs fetch hal_espressif
 ```
 
-## Configure the app
+## Configure Wi-Fi and TCP
 
 The default configuration lives in `prj.conf`. Wi-Fi credentials and local IP/port changes should not be committed to `prj.conf`; put them in a local overlay such as `local.conf` instead:
 
@@ -72,14 +108,15 @@ CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_PORT=10110
 
 Important options:
 
-- `CONFIG_ESP_NMEA_BRIDGE_AP_ENABLE`: enable SoftAP mode
-- `CONFIG_ESP_NMEA_BRIDGE_STA_ENABLE`: enable station mode
-- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE`: enable the inbound TCP NMEA server
-- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE`: enable the outbound TCP NMEA client
-- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST`: target IP address; leave empty to use the DHCP gateway learned on the station interface
-- `CONFIG_ESP_NMEA_BRIDGE_MDNS_ENABLE`: enable mDNS hostname resolution for `CONFIG_NET_HOSTNAME.local`; defaults to off
-- `CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE`: advertise the TCP NMEA server as `_nmea-0183._tcp.local`; depends on mDNS and the TCP NMEA server and defaults to off
-- `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE`: enable the optional status LED observer; it uses a `led-strip` devicetree alias when present and can be disabled with `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE=n`
+- `CONFIG_ESP_NMEA_BRIDGE_AP_ENABLE`: create a Wi-Fi network from the ESP32-C6. This is useful when clients should connect directly to the bridge.
+- `CONFIG_ESP_NMEA_BRIDGE_STA_ENABLE`: connect the ESP32-C6 to an existing Wi-Fi network.
+- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE`: listen for inbound TCP clients such as navigation apps.
+- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE`: forward NMEA data to another TCP server.
+- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST`: target IPv4 address for TCP client mode. Leave empty to use the DHCP gateway learned on the station interface.
+- `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_PORT`: TCP port for NMEA data. The default is `10110`.
+- `CONFIG_ESP_NMEA_BRIDGE_MDNS_ENABLE`: enable mDNS hostname resolution for `CONFIG_NET_HOSTNAME.local`; defaults to off.
+- `CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE`: advertise the TCP NMEA server as `_nmea-0183._tcp.local`; depends on mDNS and the TCP NMEA server and defaults to off.
+- `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE`: enable the optional status LED observer; it uses a `led-strip` devicetree alias when present and can be disabled with `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE=n`.
 
 The committed defaults keep LAN discovery disabled. For a local deployment, enable it in `local.conf`:
 
@@ -88,11 +125,11 @@ CONFIG_ESP_NMEA_BRIDGE_MDNS_ENABLE=y
 CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE=y
 ```
 
-The default hostname is `esp-nmea-bridge`, so mDNS resolves `esp-nmea-bridge.local` when enabled. The advertised NMEA service uses TCP port `10110` by default and includes TXT metadata for a read-only MAIANA GPS/AIS RX passthrough (`txtvers=1`, `talkers=GP,AI`, `content=gps,ais-rx`, `source=maiana`, `ro=1`).
+The default hostname is `esp-nmea-bridge`, so mDNS resolves `esp-nmea-bridge.local` when enabled.
 
 ## Build
 
-From the workspace root:
+From the workspace root, build with a local overlay:
 
 ```sh
 west build -p always \
@@ -128,7 +165,26 @@ sudo udevadm trigger -s tty
 west flash -d build-esp32c6 --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag
 ```
 
-## Verify mDNS and DNS-SD discovery
+## Connect a navigation app
+
+With the default SoftAP settings, connect your phone, tablet, or computer to:
+
+- Wi-Fi SSID: `ESP-NMEA0183`
+- Password: `ChangeMe1234`
+- Bridge IP address: `192.168.4.1`
+- TCP NMEA port: `10110`
+
+In your navigation app, add a TCP NMEA-0183 data source pointing to `192.168.4.1:10110`.
+
+From a computer on the same network, you can test the TCP stream with:
+
+```sh
+nc 192.168.4.1 10110
+```
+
+If station mode is configured instead, use the IP address assigned by your Wi-Fi network. When mDNS is enabled, you can also try `esp-nmea-bridge.local`.
+
+## Optional: mDNS and DNS-SD discovery
 
 When `CONFIG_ESP_NMEA_BRIDGE_MDNS_ENABLE=y`, resolve the device hostname from a Linux host on the same Wi-Fi network:
 
@@ -151,7 +207,9 @@ avahi-browse --all --resolve --terminate | grep -A8 -B2 esp-nmea
 
 The service is intentionally not available in Kconfig when `CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE=n`, so the bridge does not advertise `_nmea-0183._tcp` without a listening TCP server.
 
-## Tests
+The advertised service uses TCP port `10110` by default and includes TXT metadata for a read-only MAIANA GPS/AIS RX passthrough (`txtvers=1`, `talkers=GP,AI`, `content=gps,ais-rx`, `source=maiana`, `ro=1`).
+
+## Development and tests
 
 Run the status LED policy test with Twister:
 
