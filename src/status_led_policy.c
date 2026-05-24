@@ -30,6 +30,12 @@ void status_led_policy_nmea_frame_forwarded(struct status_led_policy_state *stat
 	state->nmea_forwarded_flash_until_ms = now_ms + STATUS_LED_NMEA_ACTIVITY_FLASH_MS;
 }
 
+void status_led_policy_nmea_send_failed(struct status_led_policy_state *state,
+					uint32_t now_ms)
+{
+	state->nmea_error_flash_until_ms = now_ms + STATUS_LED_NMEA_ACTIVITY_FLASH_MS;
+}
+
 enum status_led_base_state
 status_led_policy_base_state(const struct status_led_policy_state *state)
 {
@@ -47,6 +53,10 @@ status_led_policy_base_state(const struct status_led_policy_state *state)
 struct status_led_rgb status_led_policy_render(const struct status_led_policy_state *state,
 						 uint32_t elapsed_ms)
 {
+	if (elapsed_ms < state->nmea_error_flash_until_ms) {
+		return (struct status_led_rgb){ STATUS_LED_NMEA_ERROR_RED, 0, 0 };
+	}
+
 	if (elapsed_ms < state->nmea_forwarded_flash_until_ms) {
 		return (struct status_led_rgb){ STATUS_LED_NMEA_FORWARDED_WHITE,
 					       STATUS_LED_NMEA_FORWARDED_WHITE,

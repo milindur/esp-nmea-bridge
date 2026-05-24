@@ -99,6 +99,7 @@ enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name)
 		}
 
 		if (send_all(fd, &frame, sink_name, &result)) {
+			status_led_nmea_send_failed();
 			break;
 		}
 

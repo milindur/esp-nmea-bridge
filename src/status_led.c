@@ -149,6 +149,15 @@ void status_led_nmea_frame_forwarded(void)
 	k_mutex_unlock(&status_led_lock);
 }
 
+void status_led_nmea_send_failed(void)
+{
+	uint32_t elapsed_ms = (uint32_t)(k_uptime_get() - status_led_started_ms);
+
+	k_mutex_lock(&status_led_lock, K_FOREVER);
+	status_led_policy_nmea_send_failed(&status_led_state, elapsed_ms);
+	k_mutex_unlock(&status_led_lock);
+}
+
 int status_led_start(void)
 {
 	if (status_led_running) {
