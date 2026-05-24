@@ -30,6 +30,7 @@ static int64_t status_led_started_ms;
 static struct k_thread status_led_thread_data;
 static struct status_led_policy_state status_led_state;
 K_MUTEX_DEFINE(status_led_lock);
+K_SEM_DEFINE(status_led_wake, 0, 1);
 K_THREAD_STACK_DEFINE(status_led_stack, 1024);
 
 static struct status_led_rgb status_led_render(uint32_t elapsed_ms)
@@ -122,7 +123,7 @@ static void status_led_thread(void *a, void *b, void *c)
 			}
 		}
 
-		k_sleep(K_MSEC(STATUS_LED_UPDATE_MS));
+		(void)k_sem_take(&status_led_wake, K_MSEC(STATUS_LED_UPDATE_MS));
 	}
 }
 
@@ -154,6 +155,7 @@ void status_led_nmea_frame_received(void)
 	k_mutex_lock(&status_led_lock, K_FOREVER);
 	status_led_policy_nmea_frame_received(&status_led_state, elapsed_ms);
 	k_mutex_unlock(&status_led_lock);
+	k_sem_give(&status_led_wake);
 }
 
 void status_led_nmea_frame_forwarded(void)
@@ -163,6 +165,7 @@ void status_led_nmea_frame_forwarded(void)
 	k_mutex_lock(&status_led_lock, K_FOREVER);
 	status_led_policy_nmea_frame_forwarded(&status_led_state, elapsed_ms);
 	k_mutex_unlock(&status_led_lock);
+	k_sem_give(&status_led_wake);
 }
 
 void status_led_nmea_send_failed(void)
@@ -172,6 +175,7 @@ void status_led_nmea_send_failed(void)
 	k_mutex_lock(&status_led_lock, K_FOREVER);
 	status_led_policy_nmea_send_failed(&status_led_state, elapsed_ms);
 	k_mutex_unlock(&status_led_lock);
+	k_sem_give(&status_led_wake);
 }
 
 int status_led_start(void)
