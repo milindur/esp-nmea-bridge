@@ -1,0 +1,26 @@
+.section .rodata.web_assets, "a"
+
+.global web_asset_index_html_start
+.global web_asset_index_html_end
+.global web_asset_app_js_start
+.global web_asset_app_js_end
+.global web_asset_style_css_start
+.global web_asset_style_css_end
+
+.balign 4
+web_asset_index_html_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/src/web_assets/index.html"
+web_asset_index_html_end:
+.byte 0
+
+.balign 4
+web_asset_app_js_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/src/web_assets/app.js"
+web_asset_app_js_end:
+.byte 0
+
+.balign 4
+web_asset_style_css_start:
+.incbin "@CMAKE_CURRENT_SOURCE_DIR@/src/web_assets/style.css"
+web_asset_style_css_end:
+.byte 0

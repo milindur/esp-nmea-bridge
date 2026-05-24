@@ -14,6 +14,23 @@ target_sources(app PRIVATE
   src/tcp_nmea_session.c
 )
 
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets.S.in
+  ${CMAKE_CURRENT_BINARY_DIR}/web_assets.S
+  @ONLY
+)
+
+set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/web_assets.S PROPERTY OBJECT_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets/index.html
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets/app.js
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets/style.css
+)
+
+target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_WEB_APP_ENABLE app PRIVATE
+  src/web_app.c
+  ${CMAKE_CURRENT_BINARY_DIR}/web_assets.S
+)
+
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE app PRIVATE
   src/status_led.c
   src/status_led_policy.c

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ESP NMEA Bridge</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="dashboard">
+    <section class="masthead" aria-labelledby="page-title">
+      <div class="masthead-copy">
+        <p class="eyebrow">NMEA-0183 serial bridge</p>
+        <h1 id="page-title">Bridge Watch</h1>
+        <p class="subtitle">Local telemetry console for the onboard ESP bridge.</p>
+      </div>
+
+      <aside class="status-card" aria-live="polite">
+        <span class="status-label">System health</span>
+        <div id="health" class="health warn">
+          <span class="beacon" aria-hidden="true"></span>
+          <b>WAITING…</b>
+        </div>
+        <span id="updated" class="timestamp">No data yet.</span>
+      </aside>
+    </section>
+
+    <section class="chart-panel" aria-label="Bridge telemetry">
+      <div class="compass" aria-hidden="true"><span>N</span><span>E</span><span>S</span><span>W</span></div>
+
+      <div class="metrics">
+        <article class="metric primary">
+          <span class="label">NMEA Frames</span>
+          <strong id="frames" class="value">—</strong>
+          <span class="hint">Accepted sentences</span>
+        </article>
+        <article class="metric">
+          <span class="label">UART Bytes</span>
+          <strong id="bytes" class="value">—</strong>
+          <span class="hint">Serial ingress</span>
+        </article>
+        <article class="metric">
+          <span class="label">TCP Clients</span>
+          <strong id="clients" class="value">—</strong>
+          <span class="hint">Connected / allowed</span>
+        </article>
+        <article class="metric alertable">
+          <span class="label">Sink Drops</span>
+          <strong id="drops" class="value">—</strong>
+          <span class="hint">Backpressure events</span>
+        </article>
+      </div>
+
+      <section class="detail-log" aria-label="Detailed counters">
+        <div class="section-heading">
+          <span>Navigation data path</span>
+          <small>polling /api/status every 2 s</small>
+        </div>
+        <div id="details" class="rows"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

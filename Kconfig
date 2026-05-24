@@ -21,6 +21,16 @@ config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE
 	default y
 	depends on ESP_NMEA_BRIDGE_STA_ENABLE
 
+config ESP_NMEA_BRIDGE_WEB_APP_ENABLE
+	bool "Enable HTTP status web app"
+	default y
+	depends on NETWORKING
+	depends on NET_TCP
+	depends on NET_SOCKETS
+	help
+	  Serve a small HTTP web app and JSON status endpoint on port 80.
+	  The browser polls /api/status to display bridge health and counters.
+
 config ESP_NMEA_BRIDGE_STATUS_LED_ENABLE
 	bool "Enable status LED observer"
 	default y

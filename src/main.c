@@ -3,6 +3,7 @@
 #include "tcp_nmea_server.h"
 #include "tcp_nmea_client.h"
 #include "uart_nmea.h"
+#include "web_app.h"
 #include "wifi_manager.h"
 
 #include <zephyr/kernel.h>
@@ -65,6 +66,11 @@ int main(void)
 	ret = tcp_nmea_client_start();
 	if (ret != 0) {
 		LOG_WRN("TCP NMEA client startup returned %d; UART ingestion continues", ret);
+	}
+
+	ret = web_app_start();
+	if (ret != 0) {
+		LOG_WRN("Web app startup returned %d; UART ingestion continues", ret);
 	}
 
 	return 0;

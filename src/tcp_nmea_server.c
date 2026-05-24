@@ -150,3 +150,23 @@ int tcp_nmea_server_start(void)
 
 	return 0;
 }
+
+void tcp_nmea_server_get_stats(struct tcp_nmea_server_stats *stats)
+{
+	uint32_t active = 0;
+
+	if (stats == NULL) {
+		return;
+	}
+
+	k_mutex_lock(&clients_lock, K_FOREVER);
+	for (int i = 0; i < ARRAY_SIZE(clients); i++) {
+		if (clients[i].active) {
+			active++;
+		}
+	}
+	k_mutex_unlock(&clients_lock);
+
+	stats->active_clients = active;
+	stats->max_clients = ARRAY_SIZE(clients);
+}
