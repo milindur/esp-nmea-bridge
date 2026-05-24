@@ -129,7 +129,7 @@ The default hostname is `esp-nmea-bridge`, so mDNS resolves `esp-nmea-bridge.loc
 
 ## Build
 
-From the workspace root, build with a local overlay:
+From the workspace root, build a plain application image with a local overlay:
 
 ```sh
 west build -p always \
@@ -147,6 +147,26 @@ west build -p always \
   -b esp32c6_dev_kit_n8/esp32c6/hpcore \
   esp-nmea-bridge
 ```
+
+### Build with MCUboot
+
+Use sysbuild when you want MCUboot, signed application images, or future OTA updates:
+
+```sh
+west build -p always \
+  -d build-esp32c6 \
+  -b esp32c6_dev_kit_n8/esp32c6/hpcore \
+  esp-nmea-bridge \
+  --sysbuild
+```
+
+This builds both MCUboot and the application. The signed application image is generated at:
+
+```text
+build-esp32c6/esp-nmea-bridge/zephyr/zephyr.signed.bin
+```
+
+Plain non-MCUboot builds remain supported; omit `--sysbuild` when you do not need MCUboot or OTA-capable images.
 
 ## Flash and monitor
 
