@@ -52,17 +52,17 @@ config ESP_NMEA_BRIDGE_MDNS_ENABLE
 	  hostname.
 
 config ESP_NMEA_BRIDGE_DNS_SD_ENABLE
-	bool "Advertise TCP NMEA service via DNS-SD"
+	bool "Advertise enabled services via DNS-SD"
 	default n
 	depends on ESP_NMEA_BRIDGE_MDNS_ENABLE
-	depends on ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE
+	depends on ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE || ESP_NMEA_BRIDGE_WEB_APP_ENABLE
 	select DNS_SD
 	select MDNS_RESPONDER_DNS_SD
 	help
-	  Advertise the TCP NMEA-0183 server as _nmea-0183._tcp.local via
-	  DNS Service Discovery. This option is only available when the local
-	  TCP NMEA server is enabled, so the service is never advertised
-	  without a listening server.
+	  Advertise enabled network services via DNS Service Discovery. The TCP
+	  NMEA-0183 server is advertised as _nmea-0183._tcp.local when enabled;
+	  the built-in web app is advertised as _http._tcp.local when enabled.
+	  Services are only advertised when the corresponding listener is built in.
 
 config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST
 	string "TCP NMEA server IPv4 address"

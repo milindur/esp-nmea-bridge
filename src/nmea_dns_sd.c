@@ -1,3 +1,5 @@
+#include "web_app.h"
+
 #include <zephyr/net/dns_sd.h>
 #include <zephyr/sys/util.h>
 
@@ -22,5 +24,26 @@ DNS_SD_REGISTER_TCP_SERVICE(nmea0183,
 			    "local",
 			    nmea_txt,
 			    CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_PORT);
+
+#endif
+
+#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE) && \
+	IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_WEB_APP_ENABLE)
+
+/* Advertise the built-in status web app for browsers and generic service
+ * discovery clients. The HTTP service uses the same instance name as the
+ * device hostname so it appears as <hostname>._http._tcp.local.
+ */
+static const char http_txt[] = {
+	"\x09" "txtvers=1"
+	"\x06" "path=/"
+};
+
+DNS_SD_REGISTER_TCP_SERVICE(http,
+			    CONFIG_NET_HOSTNAME,
+			    "_http",
+			    "local",
+			    http_txt,
+			    WEB_APP_HTTP_PORT);
 
 #endif
