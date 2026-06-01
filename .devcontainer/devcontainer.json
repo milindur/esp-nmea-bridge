@@ -10,8 +10,12 @@
   "updateRemoteUserUID": true,
   "workspaceFolder": "/workspaces/esp-nmea-bridge-workspace/esp-nmea-bridge",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/esp-nmea-bridge-workspace/esp-nmea-bridge,type=bind,consistency=cached",
+  "runArgs": [
+    "--privileged"
+  ],
   "mounts": [
-    "source=esp-nmea-bridge-west-workspace,target=/workspaces/esp-nmea-bridge-workspace,type=volume"
+    "source=esp-nmea-bridge-west-workspace,target=/workspaces/esp-nmea-bridge-workspace,type=volume",
+    "source=/dev,target=/dev,type=bind"
   ],
   "containerEnv": {
     "ZEPHYR_TOOLCHAIN_VARIANT": "zephyr",
