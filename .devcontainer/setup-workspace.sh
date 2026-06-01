@@ -25,7 +25,6 @@ fi
 if [ ! -d zephyr ]; then
   echo "Fetching Zephyr projects and modules"
   west update
-  west blobs fetch hal_espressif
 else
   echo "Zephyr checkout already exists; skipping west update."
   echo "Run this when west.yml changes: bash ${APP}/.devcontainer/update-workspace.sh"
@@ -38,5 +37,11 @@ west zephyr-export
 # may be rebuilt while the persistent west volume already contains zephyr/.
 pip install -r zephyr/scripts/requirements.txt
 west packages pip --install
+
+# Fetcher backends used by Zephyr blobs depend on packages installed above
+# (notably requests/jsonschema), so keep this after Python dependency sync. Run it
+# on every setup so a failed first run does not leave the cached workspace without
+# required ESP-IDF blobs.
+west blobs fetch hal_espressif
 
 west topdir
