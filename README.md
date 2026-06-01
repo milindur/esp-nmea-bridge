@@ -127,6 +127,30 @@ CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE=y
 
 The default hostname is `esp-nmea-bridge`, so mDNS resolves `esp-nmea-bridge.local` when enabled.
 
+## Development container
+
+This repository includes a VS Code Dev Container for a hybrid Zephyr workspace:
+
+- the app repository is bind-mounted from the host, so normal host-side Git workflows keep working;
+- the Zephyr workspace parent, `.west/`, `zephyr/`, modules, and build artifacts live in the persistent Docker volume `esp-nmea-bridge-west-workspace`;
+- the container image provides the Zephyr SDK, Python environment, `west`, CMake, Ninja, `clangd`, `ccache`, and serial helper tools.
+
+Open `esp-nmea-bridge/` in VS Code and run **Dev Containers: Reopen in Container**. On first creation, `.devcontainer/setup-workspace.sh` initializes the workspace and fetches Zephyr projects and Espressif blobs. Later starts reuse the Docker volume and do not run `west update` automatically.
+
+When `west.yml` changes, update the cached workspace manually:
+
+```sh
+bash .devcontainer/update-workspace.sh
+```
+
+If a rebuilt container reports missing Python tools such as `jsonschema` or `esptool`, rerun the setup script inside the container:
+
+```sh
+bash .devcontainer/setup-workspace.sh
+```
+
+The container runs as the `vscode` user with `updateRemoteUserUID` enabled, so files created in the bind-mounted app repository use the host user's UID/GID instead of becoming root-owned. Deleting the Docker volume removes the cached Zephyr checkout, modules, build outputs, and `.west/`, but not the host-mounted app repository.
+
 ## Build
 
 From the workspace root, build a plain application image with a local overlay:

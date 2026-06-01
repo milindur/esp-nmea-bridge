@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "west: build esp32c6",
+      "type": "shell",
+      "command": "cd $(west topdir) && west build -p always --sysbuild -b esp32c6_dev_kit_n8/esp32c6/hpcore esp-nmea-bridge -- -DEXTRA_CONF_FILE=local.conf",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "west: twister tests",
+      "type": "shell",
+      "command": "cd $(west topdir) && west twister -T esp-nmea-bridge/tests/ --inline-logs",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "west: update workspace",
+      "type": "shell",
+      "command": "bash .devcontainer/update-workspace.sh",
+      "problemMatcher": []
+    }
+  ]
+}
