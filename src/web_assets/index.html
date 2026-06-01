@@ -42,8 +42,14 @@
     <section class="hero" aria-label="Bridge headline">
       <div class="hero-eyebrow">
         <span class="rule"></span>
-        <span>Watch in progress</span>
+        <span id="poll-label">Watch in progress</span>
         <time id="updated">Standing by</time>
+      </div>
+
+      <div id="offline-notice" class="offline-notice" role="status" aria-live="polite" hidden>
+        <span class="offline-kicker">Signal lost</span>
+        <strong>Bridge status is offline.</strong>
+        <span id="offline-reason">The browser cannot reach <code>/api/status</code>.</span>
       </div>
 
       <div class="hero-grid">
@@ -114,7 +120,7 @@
     </section>
 
     <footer class="colophon">
-      <span>ESP NMEA Bridge &middot; firmware live</span>
+      <span id="app-health">ESP NMEA Bridge &middot; awaiting firmware status</span>
       <span>Configuration &amp; OTA Updates &middot; on the chart for an upcoming release</span>
     </footer>
   </main>

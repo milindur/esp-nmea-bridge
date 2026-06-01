@@ -191,6 +191,48 @@ body::before {
 
 .hero { margin-bottom: clamp(28px, 5vw, 52px); }
 
+.offline-notice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 18px;
+  align-items: baseline;
+  margin: -8px 0 28px;
+  padding: 16px 18px;
+  color: var(--bad);
+  background:
+    linear-gradient(90deg, rgba(168, 42, 42, .13), transparent 64%),
+    var(--paper-light);
+  border: 1px solid color-mix(in srgb, var(--bad) 55%, var(--paper));
+  box-shadow: inset 5px 0 0 var(--bad);
+}
+
+.offline-notice[hidden] { display: none; }
+
+.offline-kicker {
+  grid-row: span 2;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  padding-right: 18px;
+  border-right: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+  font: 700 .62rem/1 var(--mono);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  writing-mode: vertical-rl;
+}
+
+.offline-notice strong {
+  font: 400 1.35rem/1 var(--serif);
+  color: var(--ink);
+}
+
+.offline-notice span:not(.offline-kicker) {
+  font: 500 .82rem/1.45 var(--sans);
+  color: var(--ink-mid);
+}
+
+.offline-notice code { font-family: var(--mono); color: var(--bad); }
+
 .hero-eyebrow {
   display: flex;
   align-items: center;
