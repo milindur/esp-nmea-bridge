@@ -25,9 +25,6 @@
         "ms-vscode.cmake-tools"
       ],
       "settings": {
-        "clangd.arguments": [
-          "--compile-commands-dir=/workspaces/esp-nmea-bridge-workspace/build/esp-nmea-bridge"
-        ],
         "cmake.configureOnOpen": false
       }
     }
