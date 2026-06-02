@@ -1,2 +1,6 @@
 CompileFlags:
   CompilationDatabase: ../build/esp-nmea-bridge
+  Remove:
+    - -fno-printf-return-value
+    - -fno-reorder-functions
+    - -fstrict-volatile-bitfields

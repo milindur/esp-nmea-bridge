@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bzip2 \
     ca-certificates \
     ccache \
+    clangd \
     cmake \
     device-tree-compiler \
     dfu-util \
