@@ -18,7 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dfu-util \
     file \
     g++ \
+    g++-multilib \
     gcc \
+    gcc-multilib \
     git \
     gperf \
     libmagic1 \
