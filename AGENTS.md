@@ -1,5 +1,9 @@
 # Agent Guidelines
 
+This repository is the Zephyr application repository. When using the Dev Container,
+it is mounted into a Zephyr west workspace at
+`/workspaces/esp-nmea-bridge-workspace/esp-nmea-bridge`.
+
 ## Agent skills
 
 ### Issue tracker
@@ -13,3 +17,44 @@ This repo uses the default five-label triage vocabulary. See `docs/agents/triage
 ### Domain docs
 
 This repo uses a single-context domain documentation layout. See `docs/agents/domain.md`.
+
+## Dev Container / Zephyr commands
+
+- Pi is expected to run on the host.
+- Build, test, and other Zephyr/west commands should run inside the Dev Container via the Dev Container CLI.
+- Do not rely on a VS Code-started Dev Container. Start or reuse the CLI-managed container first:
+  - `devcontainer up --workspace-folder .`
+- Then execute commands with:
+  - `devcontainer exec --workspace-folder . /bin/bash -lc '<command>'`
+- Inside the Dev Container, use `/workspaces/esp-nmea-bridge-workspace` as the west workspace root and `esp-nmea-bridge` as the application path.
+
+Build:
+
+```sh
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . /bin/bash -lc \
+  'cd /workspaces/esp-nmea-bridge-workspace && west build -p always --sysbuild -b esp32c6_dev_kit_n8/esp32c6/hpcore esp-nmea-bridge -- -DEXTRA_CONF_FILE=local.conf'
+```
+
+Test:
+
+```sh
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . /bin/bash -lc \
+  'cd /workspaces/esp-nmea-bridge-workspace && west twister -T esp-nmea-bridge/tests/ --inline-logs'
+```
+
+Flash:
+
+```sh
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . /bin/bash -lc \
+  'cd /workspaces/esp-nmea-bridge-workspace && west flash --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag'
+```
+
+Monitor console:
+
+```sh
+devcontainer exec --workspace-folder . /bin/bash -lc \
+  'tio /dev/waveshare/esp32c6-dev-kit-n8/uart -b 115200'
+```
