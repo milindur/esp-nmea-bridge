@@ -20,6 +20,7 @@ struct bridge_telemetry_counters {
 	uint32_t uart_bytes_rx;
 	uint32_t uart_lines_rx;
 	uint32_t uart_overlong_lines;
+	uint32_t uart_ais_self_mmsi_filtered;
 	uint32_t bridge_frames_in;
 	uint32_t bridge_ingest_dropped_oldest;
 	uint32_t bridge_sink_dropped_oldest;
@@ -48,6 +49,7 @@ struct bridge_telemetry_inputs {
 	uint32_t uart_bytes_rx;
 	uint32_t uart_lines_rx;
 	uint32_t uart_overlong_lines;
+	uint32_t uart_ais_self_mmsi_filtered;
 	uint32_t bridge_frames_in;
 	uint32_t bridge_ingest_dropped_oldest;
 	uint32_t bridge_sink_dropped_oldest;

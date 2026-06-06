@@ -117,6 +117,7 @@ Important options:
 - `CONFIG_ESP_NMEA_BRIDGE_MDNS_ENABLE`: enable mDNS hostname resolution for `CONFIG_NET_HOSTNAME.local`; defaults to off.
 - `CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE`: advertise the TCP NMEA server as `_nmea-0183._tcp.local`; depends on mDNS and the TCP NMEA server and defaults to off.
 - `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE`: enable the optional status LED observer; it uses a `led-strip` devicetree alias when present and can be disabled with `CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE=n`.
+- `CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE`: enable the optional AIS self-MMSI filter. Set `CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI` to your own MMSI; only checksum-valid AIS `VDM` NMEA frames confirmed to carry that MMSI are dropped.
 
 The committed defaults keep LAN discovery disabled. For a local deployment, enable it in `local.conf`:
 

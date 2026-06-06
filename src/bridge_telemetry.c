@@ -18,6 +18,7 @@ static void copy_counters(const struct bridge_telemetry_inputs *inputs,
 	counters->uart_bytes_rx = inputs->uart_bytes_rx;
 	counters->uart_lines_rx = inputs->uart_lines_rx;
 	counters->uart_overlong_lines = inputs->uart_overlong_lines;
+	counters->uart_ais_self_mmsi_filtered = inputs->uart_ais_self_mmsi_filtered;
 	counters->bridge_frames_in = inputs->bridge_frames_in;
 	counters->bridge_ingest_dropped_oldest = inputs->bridge_ingest_dropped_oldest;
 	counters->bridge_sink_dropped_oldest = inputs->bridge_sink_dropped_oldest;
@@ -44,6 +45,7 @@ static void collect_inputs(struct bridge_telemetry_inputs *inputs)
 	inputs->uart_bytes_rx = uart_stats.bytes_rx;
 	inputs->uart_lines_rx = uart_stats.lines_rx;
 	inputs->uart_overlong_lines = uart_stats.overlong_lines;
+	inputs->uart_ais_self_mmsi_filtered = uart_stats.ais_self_mmsi_filtered;
 	inputs->bridge_frames_in = bridge_stats.frames_in;
 	inputs->bridge_ingest_dropped_oldest = bridge_stats.ingest_dropped_oldest;
 	inputs->bridge_sink_dropped_oldest = bridge_stats.sink_dropped_oldest;

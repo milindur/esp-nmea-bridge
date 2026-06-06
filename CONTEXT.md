@@ -12,6 +12,10 @@ _Avoid_: packet, line, message
 The in-process fan-out point that accepts NMEA frames from producers and queues them for registered sinks.
 _Avoid_: bus, broker, router
 
+**AIS self-MMSI filter**:
+An optional input-side filter that examines complete AIS VDM NMEA frames and drops only frames whose decoded AIS MMSI is confirmed to match the configured own MMSI. It accepts VDM from any NMEA talker ID, leaves VDO pass-through, requires a valid NMEA checksum before dropping, and tracks multipart VDM sequences when a sequence ID safely identifies following fragments. Unknown, malformed, unsupported, checksum-missing, checksum-invalid, non-VDM, or ambiguously correlated NMEA frames remain pass-through.
+_Avoid_: AIS decoder, NMEA validator, generic frame gate
+
 **TCP NMEA session**:
 One connected TCP socket carrying NMEA frames from the NMEA bridge to a peer until the peer closes or sending fails.
 _Avoid_: connection handler, client worker, socket loop

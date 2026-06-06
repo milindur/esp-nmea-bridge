@@ -73,6 +73,7 @@ function render(status) {
     rowItem('Active TCP NMEA sessions', format(status.tcp.active_sessions), status.tcp.active_sessions > 0 ? 'ok' : null) +
     rowItem('Inbound TCP clients', `${format(status.tcp_server.active_clients)} / ${format(status.tcp_server.max_clients)}`) +
     rowItem('UART lines received', format(status.uart.lines_rx)) +
+    rowItem('AIS self-MMSI filtered', format(status.uart.ais_self_mmsi_filtered), status.uart.ais_self_mmsi_filtered > 0 ? 'ok' : null) +
     rowItem('Overlong UART lines', format(status.uart.overlong_lines), status.uart.overlong_lines > 0 ? 'warn' : null) +
     rowItem('Ingest dropped (oldest)', format(status.bridge.ingest_dropped_oldest), status.bridge.ingest_dropped_oldest > 0 ? 'warn' : null) +
     rowItem('No-sink publishes', format(status.bridge.publish_no_sinks)) +

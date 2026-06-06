@@ -7,6 +7,11 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
+
+#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
+#include "ais_mmsi_filter.h"
+#endif
 
 LOG_MODULE_REGISTER(uart_nmea, LOG_LEVEL_INF);
 
@@ -20,6 +25,10 @@ LOG_MODULE_REGISTER(uart_nmea, LOG_LEVEL_INF);
 static const struct device *const nmea_uart = DEVICE_DT_GET(NMEA_UART_NODE);
 static struct uart_nmea_stats uart_stats;
 static bool started;
+
+#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
+static struct ais_mmsi_filter ais_filter;
+#endif
 
 static void uart_rx_thread(void *a, void *b, void *c)
 {
@@ -57,9 +66,16 @@ static void uart_rx_thread(void *a, void *b, void *c)
 			}
 
 			if (ch == '\n') {
+				uart_stats.lines_rx++;
+#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
+				if (ais_mmsi_filter_should_drop(&ais_filter, line, line_len)) {
+					uart_stats.ais_self_mmsi_filtered++;
+					line_len = 0;
+					continue;
+				}
+#endif
 				(void)nmea_bridge_publish_frame(line, line_len);
 				status_led_nmea_frame_received();
-				uart_stats.lines_rx++;
 				line_len = 0;
 			}
 		}
@@ -81,6 +97,12 @@ int uart_nmea_start(void)
 	}
 
 	if (!started) {
+#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
+		ais_mmsi_filter_init(&ais_filter, CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI);
+		if (CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI == 0) {
+			LOG_WRN("AIS self-MMSI filter enabled with MMSI=0; filter inactive");
+		}
+#endif
 		started = true;
 		k_thread_create(&uart_nmea_thread, uart_nmea_stack,
 				K_THREAD_STACK_SIZEOF(uart_nmea_stack), uart_rx_thread,
