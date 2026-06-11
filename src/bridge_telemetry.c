@@ -16,8 +16,8 @@ static void copy_counters(const struct bridge_telemetry_inputs *inputs,
 			 struct bridge_telemetry_counters *counters)
 {
 	counters->uart_bytes_rx = inputs->uart_bytes_rx;
-	counters->uart_lines_rx = inputs->uart_lines_rx;
-	counters->uart_overlong_lines = inputs->uart_overlong_lines;
+	counters->uart_frames_rx = inputs->uart_frames_rx;
+	counters->uart_overlong_frames = inputs->uart_overlong_frames;
 	counters->uart_ais_self_mmsi_filtered = inputs->uart_ais_self_mmsi_filtered;
 	counters->bridge_frames_in = inputs->bridge_frames_in;
 	counters->bridge_ingest_dropped_oldest = inputs->bridge_ingest_dropped_oldest;
@@ -43,8 +43,8 @@ static void collect_inputs(struct bridge_telemetry_inputs *inputs)
 	tcp_nmea_session_get_stats(&session_stats);
 
 	inputs->uart_bytes_rx = uart_stats.bytes_rx;
-	inputs->uart_lines_rx = uart_stats.lines_rx;
-	inputs->uart_overlong_lines = uart_stats.overlong_lines;
+	inputs->uart_frames_rx = uart_stats.frames_rx;
+	inputs->uart_overlong_frames = uart_stats.overlong_frames;
 	inputs->uart_ais_self_mmsi_filtered = uart_stats.ais_self_mmsi_filtered;
 	inputs->bridge_frames_in = bridge_stats.frames_in;
 	inputs->bridge_ingest_dropped_oldest = bridge_stats.ingest_dropped_oldest;
@@ -85,7 +85,7 @@ void bridge_telemetry_build_snapshot(struct bridge_telemetry_state *state,
 			BRIDGE_TELEMETRY_NMEA_INPUT_WINDOW_MS ?
 			BRIDGE_TELEMETRY_NMEA_INPUT_ACTIVE : BRIDGE_TELEMETRY_NMEA_INPUT_IDLE;
 	}
-	snapshot->warnings.data_quality = inputs->uart_overlong_lines > 0U ||
+	snapshot->warnings.data_quality = inputs->uart_overlong_frames > 0U ||
 		inputs->bridge_publish_invalid > 0U || inputs->bridge_publish_oversize > 0U;
 	snapshot->warnings.frame_loss = inputs->bridge_ingest_dropped_oldest > 0U ||
 		inputs->bridge_sink_dropped_oldest > 0U;

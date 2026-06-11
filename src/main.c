@@ -24,8 +24,8 @@ static void stats_thread(void *a, void *b, void *c)
 		uart_nmea_get_stats(&uart_stats);
 		nmea_bridge_get_stats(&bridge_stats);
 
-		LOG_INF("stats: uart_bytes=%u lines=%u overlong=%u frames=%u ingest_drop=%u sink_drop=%u no_sinks=%u invalid=%u oversize=%u",
-			uart_stats.bytes_rx, uart_stats.lines_rx, uart_stats.overlong_lines,
+		LOG_INF("stats: uart_bytes=%u uart_frames=%u overlong=%u frames=%u ingest_drop=%u sink_drop=%u no_sinks=%u invalid=%u oversize=%u",
+			uart_stats.bytes_rx, uart_stats.frames_rx, uart_stats.overlong_frames,
 			bridge_stats.frames_in, bridge_stats.ingest_dropped_oldest,
 			bridge_stats.sink_dropped_oldest, bridge_stats.publish_no_sinks,
 			bridge_stats.publish_invalid, bridge_stats.publish_oversize);

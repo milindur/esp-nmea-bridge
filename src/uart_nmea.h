@@ -5,8 +5,8 @@
 
 struct uart_nmea_stats {
 	uint32_t bytes_rx;
-	uint32_t lines_rx;
-	uint32_t overlong_lines;
+	uint32_t frames_rx;
+	uint32_t overlong_frames;
 	uint32_t ais_self_mmsi_filtered;
 };
 

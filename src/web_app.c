@@ -111,7 +111,7 @@ static void write_status_json(int fd)
 		"{\"connection_state\":\"%s\",\"input_state\":\"%s\","
 		"\"warnings\":{\"data_quality\":%s,\"frame_loss\":%s},"
 		"\"wifi\":{\"sta_ready\":%s},"
-		"\"uart\":{\"bytes_rx\":%u,\"lines_rx\":%u,\"overlong_lines\":%u,"
+		"\"uart\":{\"bytes_rx\":%u,\"frames_rx\":%u,\"overlong_frames\":%u,"
 		"\"ais_self_mmsi_filtered\":%u},"
 		"\"bridge\":{\"frames_in\":%u,\"ingest_dropped_oldest\":%u,"
 		"\"sink_dropped_oldest\":%u,\"publish_no_sinks\":%u,"
@@ -122,7 +122,7 @@ static void write_status_json(int fd)
 		snapshot.warnings.data_quality ? "true" : "false",
 		snapshot.warnings.frame_loss ? "true" : "false",
 		snapshot.sta_ready ? "true" : "false",
-		counters->uart_bytes_rx, counters->uart_lines_rx, counters->uart_overlong_lines,
+		counters->uart_bytes_rx, counters->uart_frames_rx, counters->uart_overlong_frames,
 		counters->uart_ais_self_mmsi_filtered,
 		counters->bridge_frames_in, counters->bridge_ingest_dropped_oldest,
 		counters->bridge_sink_dropped_oldest, counters->bridge_publish_no_sinks,

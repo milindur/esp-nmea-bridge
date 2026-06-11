@@ -59,14 +59,14 @@ static void uart_rx_thread(void *a, void *b, void *c)
 			if (line_len < sizeof(line)) {
 				line[line_len++] = ch;
 			} else {
-				uart_stats.overlong_lines++;
+				uart_stats.overlong_frames++;
 				dropping_overlong = true;
 				line_len = 0;
 				continue;
 			}
 
 			if (ch == '\n') {
-				uart_stats.lines_rx++;
+				uart_stats.frames_rx++;
 #if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
 				if (ais_mmsi_filter_should_drop(&ais_filter, line, line_len)) {
 					uart_stats.ais_self_mmsi_filtered++;
