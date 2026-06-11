@@ -36,8 +36,8 @@ static void uart_rx_thread(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	uint8_t line[CONFIG_ESP_NMEA_BRIDGE_NMEA_FRAME_MAX_LEN];
-	size_t line_len = 0;
+	uint8_t frame[CONFIG_ESP_NMEA_BRIDGE_NMEA_FRAME_MAX_LEN];
+	size_t frame_len = 0;
 	bool dropping_overlong = false;
 
 	for (;;) {
@@ -51,33 +51,33 @@ static void uart_rx_thread(void *a, void *b, void *c)
 			if (dropping_overlong) {
 				if (ch == '\n') {
 					dropping_overlong = false;
-					line_len = 0;
+					frame_len = 0;
 				}
 				continue;
 			}
 
-			if (line_len < sizeof(line)) {
-				line[line_len++] = ch;
+			if (frame_len < sizeof(frame)) {
+				frame[frame_len++] = ch;
 			} else {
 				uart_stats.overlong_frames++;
 				dropping_overlong = true;
-				line_len = 0;
+				frame_len = 0;
 				continue;
 			}
 
 			if (ch == '\n') {
 				uart_stats.frames_rx++;
 #if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
-				if (ais_mmsi_filter_should_drop(&ais_filter, line, line_len)) {
+				if (ais_mmsi_filter_should_drop(&ais_filter, frame, frame_len)) {
 					uart_stats.ais_self_mmsi_filtered++;
-					line_len = 0;
+					frame_len = 0;
 					continue;
 				}
 #endif
-				if (nmea_bridge_publish_frame(line, line_len) == 0) {
+				if (nmea_bridge_publish_frame(frame, frame_len) == 0) {
 					status_led_nmea_frame_received();
 				}
-				line_len = 0;
+				frame_len = 0;
 			}
 		}
 
