@@ -1,0 +1,5 @@
+description: Fake LED strip used to exercise status LED hardware failure paths
+
+compatible: "vnd,fake-led-strip"
+
+include: base.yaml

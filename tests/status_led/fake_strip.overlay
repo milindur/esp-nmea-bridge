@@ -1,0 +1,10 @@
+/ {
+	aliases {
+		led-strip = &fake_led_strip;
+	};
+
+	fake_led_strip: fake-led-strip {
+		compatible = "vnd,fake-led-strip";
+		status = "okay";
+	};
+};

@@ -1,0 +1,19 @@
+# Test-only knobs for the status LED hardware failure suite
+
+config TEST_FAKE_LED_STRIP
+	bool "Compile the fake LED strip driver"
+
+config TEST_FAKE_LED_STRIP_INIT_FAIL
+	bool "Make the fake LED strip fail device init"
+	depends on TEST_FAKE_LED_STRIP
+
+config TEST_STATUS_LED_SCENARIO_NO_DEVICE
+	bool "Scenario: no led-strip devicetree alias"
+
+config TEST_STATUS_LED_SCENARIO_NOT_READY
+	bool "Scenario: led-strip device not ready"
+
+config TEST_STATUS_LED_SCENARIO_UPDATE_FAILURE
+	bool "Scenario: led-strip update failures with retry backoff"
+
+source "Kconfig.zephyr"

@@ -1,0 +1,23 @@
+tests:
+  esp_nmea_bridge.status_led.no_device:
+    platform_allow: native_sim
+    tags: status_led
+    extra_configs:
+      - CONFIG_TEST_STATUS_LED_SCENARIO_NO_DEVICE=y
+  esp_nmea_bridge.status_led.not_ready:
+    platform_allow: native_sim
+    tags: status_led
+    extra_args:
+      - DTC_OVERLAY_FILE=fake_strip.overlay
+    extra_configs:
+      - CONFIG_TEST_FAKE_LED_STRIP=y
+      - CONFIG_TEST_FAKE_LED_STRIP_INIT_FAIL=y
+      - CONFIG_TEST_STATUS_LED_SCENARIO_NOT_READY=y
+  esp_nmea_bridge.status_led.update_failure:
+    platform_allow: native_sim
+    tags: status_led
+    extra_args:
+      - DTC_OVERLAY_FILE=fake_strip.overlay
+    extra_configs:
+      - CONFIG_TEST_FAKE_LED_STRIP=y
+      - CONFIG_TEST_STATUS_LED_SCENARIO_UPDATE_FAILURE=y
