@@ -29,7 +29,7 @@ config ESP_NMEA_BRIDGE_WEB_APP_ENABLE
 	depends on NET_SOCKETS
 	help
 	  Serve a small HTTP web app and JSON status endpoint on port 80.
-	  The browser polls /api/status to display bridge health and counters.
+	  The browser polls /api/status to display bridge telemetry counters.
 
 config ESP_NMEA_BRIDGE_STATUS_LED_ENABLE
 	bool "Enable status LED observer"
