@@ -80,6 +80,9 @@ static void client_thread(void *a, void *b, void *c)
 		uint32_t wait_ticks = 0;
 
 		while (!get_tcp_nmea_server_host(&host)) {
+			if (wait_ticks == 0U) {
+				status_led_tcp_nmea_client_connecting(false);
+			}
 			wait_ticks++;
 			if ((wait_ticks % 5U) == 0U) {
 				LOG_INF("TCP NMEA client waiting for STA IPv4%s",
