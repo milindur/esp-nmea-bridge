@@ -6,7 +6,6 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(status_led_test)
 
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
-target_compile_definitions(app PRIVATE CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE=1)
 target_sources(app PRIVATE
   src/main.c
   ../../src/status_led.c

@@ -1,5 +1,12 @@
 # Test-only knobs for the status LED hardware failure suite
 
+# Mirrors the app symbol from the root Kconfig (without `select LED_STRIP`,
+# the fake driver replaces the real strip) so status_led.h compiles the
+# hardware path.
+config ESP_NMEA_BRIDGE_STATUS_LED_ENABLE
+	bool
+	default y
+
 config TEST_FAKE_LED_STRIP
 	bool "Compile the fake LED strip driver"
 
