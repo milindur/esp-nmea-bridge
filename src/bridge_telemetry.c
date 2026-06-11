@@ -26,8 +26,8 @@ static void copy_counters(const struct bridge_telemetry_inputs *inputs,
 	counters->bridge_publish_invalid = inputs->bridge_publish_invalid;
 	counters->bridge_publish_oversize = inputs->bridge_publish_oversize;
 	counters->tcp_nmea_active_sessions = inputs->tcp_nmea_active_sessions;
-	counters->tcp_server_active_clients = inputs->tcp_server_active_clients;
-	counters->tcp_server_max_clients = inputs->tcp_server_max_clients;
+	counters->tcp_server_active_peers = inputs->tcp_server_active_peers;
+	counters->tcp_server_max_peers = inputs->tcp_server_max_peers;
 }
 
 static void collect_inputs(struct bridge_telemetry_inputs *inputs)
@@ -53,8 +53,8 @@ static void collect_inputs(struct bridge_telemetry_inputs *inputs)
 	inputs->bridge_publish_invalid = bridge_stats.publish_invalid;
 	inputs->bridge_publish_oversize = bridge_stats.publish_oversize;
 	inputs->tcp_nmea_active_sessions = session_stats.active_sessions;
-	inputs->tcp_server_active_clients = server_stats.active_clients;
-	inputs->tcp_server_max_clients = server_stats.max_clients;
+	inputs->tcp_server_active_peers = server_stats.active_peers;
+	inputs->tcp_server_max_peers = server_stats.max_peers;
 	inputs->sta_ready = wifi_manager_sta_ready();
 }
 

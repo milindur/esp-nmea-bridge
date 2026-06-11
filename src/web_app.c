@@ -117,7 +117,7 @@ static void write_status_json(int fd)
 		"\"sink_dropped_oldest\":%u,\"publish_no_sinks\":%u,"
 		"\"publish_invalid\":%u,\"publish_oversize\":%u},"
 		"\"tcp\":{\"active_sessions\":%u},"
-		"\"tcp_server\":{\"active_clients\":%u,\"max_clients\":%u}}",
+		"\"tcp_server\":{\"active_peers\":%u,\"max_peers\":%u}}",
 		connection_state, input_state,
 		snapshot.warnings.data_quality ? "true" : "false",
 		snapshot.warnings.frame_loss ? "true" : "false",
@@ -128,7 +128,7 @@ static void write_status_json(int fd)
 		counters->bridge_sink_dropped_oldest, counters->bridge_publish_no_sinks,
 		counters->bridge_publish_invalid, counters->bridge_publish_oversize,
 		counters->tcp_nmea_active_sessions,
-		counters->tcp_server_active_clients, counters->tcp_server_max_clients);
+		counters->tcp_server_active_peers, counters->tcp_server_max_peers);
 
 	write_text_response(fd, "200 OK", "application/json", body);
 }

@@ -4,8 +4,8 @@
 #include <stdint.h>
 
 struct tcp_nmea_server_stats {
-	uint32_t active_clients;
-	uint32_t max_clients;
+	uint32_t active_peers;
+	uint32_t max_peers;
 };
 
 int tcp_nmea_server_start(void);

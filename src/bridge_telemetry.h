@@ -28,8 +28,8 @@ struct bridge_telemetry_counters {
 	uint32_t bridge_publish_invalid;
 	uint32_t bridge_publish_oversize;
 	uint32_t tcp_nmea_active_sessions;
-	uint32_t tcp_server_active_clients;
-	uint32_t tcp_server_max_clients;
+	uint32_t tcp_server_active_peers;
+	uint32_t tcp_server_max_peers;
 };
 
 struct bridge_telemetry_warnings {
@@ -57,8 +57,8 @@ struct bridge_telemetry_inputs {
 	uint32_t bridge_publish_invalid;
 	uint32_t bridge_publish_oversize;
 	uint32_t tcp_nmea_active_sessions;
-	uint32_t tcp_server_active_clients;
-	uint32_t tcp_server_max_clients;
+	uint32_t tcp_server_active_peers;
+	uint32_t tcp_server_max_peers;
 	bool sta_ready;
 };
 

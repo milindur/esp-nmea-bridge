@@ -34,7 +34,7 @@ bool wifi_manager_sta_ready(void)
 static struct bridge_telemetry_inputs base_inputs(void)
 {
 	return (struct bridge_telemetry_inputs){
-		.tcp_server_max_clients = 3U,
+		.tcp_server_max_peers = 3U,
 	};
 }
 

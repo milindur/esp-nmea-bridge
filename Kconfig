@@ -122,8 +122,8 @@ config ESP_NMEA_BRIDGE_TCP_NMEA_PORT
 	int "TCP NMEA port"
 	default 10110
 
-config ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_MAX_CLIENTS
-	int "Maximum TCP NMEA server clients"
+config ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_MAX_PEERS
+	int "Maximum TCP NMEA server peers"
 	default 3
 	range 1 8
 
@@ -134,7 +134,7 @@ config ESP_NMEA_BRIDGE_NMEA_SINKS_MAX
 	help
 	  Maximum concurrent sinks registered with the in-process NMEA bridge.
 	  TCP NMEA server sessions and the outbound TCP NMEA client each consume
-	  one sink while connected. Keep this at least TCP_NMEA_SERVER_MAX_CLIENTS
+	  one sink while connected. Keep this at least TCP_NMEA_SERVER_MAX_PEERS
 	  plus one when the TCP NMEA client is enabled.
 
 config ESP_NMEA_BRIDGE_NMEA_FRAME_MAX_LEN

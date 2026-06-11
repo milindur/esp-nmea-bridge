@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const fmt = new Intl.NumberFormat('en-US');
 const format = (v) => fmt.format(v ?? 0);
-const metrics = ['frames', 'bytes', 'clients', 'drops', 'warn-count'];
+const metrics = ['frames', 'bytes', 'peers', 'drops', 'warn-count'];
 
 function setText(id, text) {
   const el = $(id);
@@ -63,7 +63,7 @@ function render(status) {
 
   setText('frames', format(status.bridge.frames_in));
   setText('bytes', format(status.uart.bytes_rx));
-  setText('clients', `${format(status.tcp_server.active_clients)} / ${format(status.tcp_server.max_clients)}`);
+  setText('peers', `${format(status.tcp_server.active_peers)} / ${format(status.tcp_server.max_peers)}`);
   setText('drops', format(status.bridge.sink_dropped_oldest));
 
   const warnCount = (status.warnings.data_quality ? 1 : 0) + (status.warnings.frame_loss ? 1 : 0);
@@ -71,7 +71,7 @@ function render(status) {
 
   $('details').innerHTML =
     rowItem('Active TCP NMEA sessions', format(status.tcp.active_sessions), status.tcp.active_sessions > 0 ? 'ok' : null) +
-    rowItem('Inbound TCP clients', `${format(status.tcp_server.active_clients)} / ${format(status.tcp_server.max_clients)}`) +
+    rowItem('Inbound TCP peers', `${format(status.tcp_server.active_peers)} / ${format(status.tcp_server.max_peers)}`) +
     rowItem('UART frames received', format(status.uart.frames_rx)) +
     rowItem('AIS self-MMSI filtered', format(status.uart.ais_self_mmsi_filtered), status.uart.ais_self_mmsi_filtered > 0 ? 'ok' : null) +
     rowItem('Overlong UART frames', format(status.uart.overlong_frames), status.uart.overlong_frames > 0 ? 'warn' : null) +
