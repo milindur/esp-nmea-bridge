@@ -74,8 +74,9 @@ static void uart_rx_thread(void *a, void *b, void *c)
 					continue;
 				}
 #endif
-				(void)nmea_bridge_publish_frame(line, line_len);
-				status_led_nmea_frame_received();
+				if (nmea_bridge_publish_frame(line, line_len) == 0) {
+					status_led_nmea_frame_received();
+				}
 				line_len = 0;
 			}
 		}
