@@ -37,7 +37,7 @@ The current availability of NMEA frames at the UART input, evaluated over a shor
 _Avoid_: NMEA health, data health, UART health
 
 **NMEA forwarding activity**:
-A short-lived occurrence where an NMEA frame is received from UART or successfully sent by a TCP NMEA session.
+A short-lived occurrence where a UART NMEA frame is accepted by the NMEA bridge or an NMEA frame is successfully sent by a TCP NMEA session.
 _Avoid_: packet activity, data event
 
 **Bridge telemetry**:
