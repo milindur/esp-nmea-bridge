@@ -1,0 +1,4 @@
+tests:
+  esp_nmea_bridge.ota_update:
+    platform_allow: native_sim
+    tags: ota dfu mcuboot

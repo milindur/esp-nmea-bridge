@@ -1,0 +1,4 @@
+tests:
+  esp_nmea_bridge.web_app_ota_boundary:
+    platform_allow: native_sim
+    tags: web_app ota http
