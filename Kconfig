@@ -31,6 +31,38 @@ config ESP_NMEA_BRIDGE_WEB_APP_ENABLE
 	  Serve a small HTTP web app and JSON status endpoint on port 80.
 	  The browser polls /api/status to display bridge telemetry counters.
 
+config ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	bool "Enable WebApp firmware OTA updates"
+	default n
+	depends on ESP_NMEA_BRIDGE_WEB_APP_ENABLE
+	depends on FLASH
+	depends on FLASH_MAP
+	depends on STREAM_FLASH
+	depends on IMG_MANAGER
+	select REBOOT
+	help
+	  Enable firmware upload through the local WebApp. Uploaded images are
+	  written to the MCUboot upload slot and booted once as a test image.
+	  Leave this disabled unless the WebApp network is trusted.
+
+config ESP_NMEA_BRIDGE_OTA_MAX_UPLOAD_BYTES
+	int "Maximum OTA upload size in bytes"
+	default 0
+	depends on ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	help
+	  Optional upload-size ceiling. A value of 0 uses the MCUboot upload slot
+	  size reported by the flash map at runtime.
+
+config ESP_NMEA_BRIDGE_OTA_UPLOAD_TRUSTED_NETWORK_ENABLE
+	bool "Allow WebApp OTA uploads from the reachable HTTP network"
+	default n
+	depends on ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	help
+	  Allow POST /api/ota/upload to accept firmware bytes from clients that can
+	  reach the WebApp. Enable only on an isolated or otherwise trusted network;
+	  this is a deliberate acknowledgement that the endpoint has no per-user
+	  authentication.
+
 config ESP_NMEA_BRIDGE_STATUS_LED_ENABLE
 	bool "Enable status LED observer"
 	default y

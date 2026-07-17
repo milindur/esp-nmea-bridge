@@ -20,6 +20,8 @@ configure_file(
   @ONLY
 )
 
+# Keep every embedded WebApp asset listed here so UI-only OTA changes
+# invalidate the generated incbin object without relying on implicit scans.
 set_property(SOURCE ${CMAKE_CURRENT_BINARY_DIR}/web_assets.S PROPERTY OBJECT_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets/index.html
   ${CMAKE_CURRENT_SOURCE_DIR}/src/web_assets/app.js
@@ -30,6 +32,10 @@ target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_WEB_APP_ENABLE app PRIVATE
   src/bridge_telemetry.c
   src/web_app.c
   ${CMAKE_CURRENT_BINARY_DIR}/web_assets.S
+)
+
+target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE app PRIVATE
+  src/ota_update.c
 )
 
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE app PRIVATE
