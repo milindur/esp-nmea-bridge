@@ -28,9 +28,9 @@
       </div>
 
       <nav class="tabs" aria-label="Sections">
-        <a class="tab is-active" href="#" aria-current="page">Status</a>
+        <a class="tab is-active" href="#main" aria-current="page">Status</a>
         <a class="tab is-future" href="#" aria-disabled="true">Configuration<em>soon</em></a>
-        <a class="tab is-future" href="#" aria-disabled="true">OTA Updates<em>soon</em></a>
+        <a class="tab" href="#ota">OTA Updates</a>
       </nav>
     </div>
     <div class="ribbon-rule" aria-hidden="true">
@@ -119,9 +119,45 @@
       <dl id="details" class="log-grid"></dl>
     </section>
 
+    <section id="ota" class="ota-panel" aria-labelledby="ota-title">
+      <header class="ota-header">
+        <div>
+          <span class="log-eyebrow">Firmware chart table</span>
+          <h2 id="ota-title" class="log-title">OTA updates</h2>
+        </div>
+        <span id="ota-state" class="ota-badge state-warn">Checking</span>
+      </header>
+
+      <div class="ota-grid">
+        <form id="ota-form" class="ota-upload" aria-describedby="ota-help">
+          <label class="file-picker" for="ota-file">
+            <span class="file-picker-cap">Signed application image</span>
+            <strong id="ota-file-name">Choose firmware binary</strong>
+            <input id="ota-file" type="file" accept=".bin,application/octet-stream">
+          </label>
+          <p id="ota-help" class="ota-help">Upload the raw signed firmware binary. The bridge writes it to the inactive MCUboot slot, returns a final response, then reboots into the test image.</p>
+          <button id="ota-upload-button" class="ota-button" type="submit" disabled>Upload and reboot</button>
+          <div class="ota-progress" aria-label="OTA upload progress">
+            <span id="ota-progress-bar"></span>
+          </div>
+          <p id="ota-message" class="ota-message" role="status" aria-live="polite">Waiting for OTA status.</p>
+        </form>
+
+        <dl class="ota-status">
+          <div><dt>Availability</dt><dd id="ota-enabled">&mdash;</dd></div>
+          <div><dt>Upload gate</dt><dd id="ota-upload-gate">&mdash;</dd></div>
+          <div><dt>Upload bytes</dt><dd id="ota-bytes">&mdash;</dd></div>
+          <div><dt>Max image size</dt><dd id="ota-max-bytes">&mdash;</dd></div>
+          <div><dt>Upload slot</dt><dd id="ota-slot">&mdash;</dd></div>
+          <div><dt>Confirmed</dt><dd id="ota-confirmed">&mdash;</dd></div>
+          <div class="ota-status-wide"><dt>Last error</dt><dd id="ota-error">none</dd></div>
+        </dl>
+      </div>
+    </section>
+
     <footer class="colophon">
       <span id="app-health">ESP NMEA Bridge &middot; awaiting firmware status</span>
-      <span>Configuration &amp; OTA Updates &middot; on the chart for an upcoming release</span>
+      <span>Configuration pending &middot; OTA available when firmware enables it</span>
     </footer>
   </main>
 
