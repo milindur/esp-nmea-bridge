@@ -1,10 +1,12 @@
 #include "web_app.h"
 
 #include "bridge_telemetry.h"
+#include "ota_update.h"
 
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -12,10 +14,41 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/sys/util.h>
 
+#ifdef CONFIG_ZTEST
+ssize_t web_app_test_zsock_recv(int sock, void *buf, size_t max_len, int flags);
+ssize_t web_app_test_zsock_send(int sock, const void *buf, size_t len, int flags);
+int web_app_test_zsock_socket(int family, int type, int proto);
+int web_app_test_zsock_setsockopt(int sock, int level, int optname, const void *optval,
+				       socklen_t optlen);
+int web_app_test_zsock_bind(int sock, const struct sockaddr *addr, socklen_t addrlen);
+int web_app_test_zsock_listen(int sock, int backlog);
+int web_app_test_zsock_accept(int sock, struct sockaddr *addr, socklen_t *addrlen);
+int web_app_test_zsock_close(int sock);
+#define web_recv web_app_test_zsock_recv
+#define web_send web_app_test_zsock_send
+#define web_socket web_app_test_zsock_socket
+#define web_setsockopt web_app_test_zsock_setsockopt
+#define web_bind web_app_test_zsock_bind
+#define web_listen web_app_test_zsock_listen
+#define web_accept web_app_test_zsock_accept
+#define web_close web_app_test_zsock_close
+#else
+#define web_recv zsock_recv
+#define web_send zsock_send
+#define web_socket zsock_socket
+#define web_setsockopt zsock_setsockopt
+#define web_bind zsock_bind
+#define web_listen zsock_listen
+#define web_accept zsock_accept
+#define web_close zsock_close
+#endif
+
 LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 
-#define WEB_APP_RX_BUF_SIZE 384
-#define WEB_APP_JSON_BUF_SIZE 1024
+#define WEB_APP_RX_BUF_SIZE 1024
+#define WEB_APP_JSON_BUF_SIZE 1536
+#define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
+#define WEB_APP_OTA_RECV_TIMEOUT_MS 5000
 
 extern const char web_asset_index_html_start[];
 extern const char web_asset_index_html_end[];
@@ -31,6 +64,17 @@ struct web_asset {
 	const char *end;
 };
 
+struct http_request {
+	const char *method;
+	size_t method_len;
+	const char *path;
+	size_t path_len;
+	size_t content_length;
+	bool has_content_length;
+	const uint8_t *body;
+	size_t body_len;
+};
+
 static const struct web_asset assets[] = {
 	{ "/", "text/html; charset=utf-8", web_asset_index_html_start, web_asset_index_html_end },
 	{ "/index.html", "text/html; charset=utf-8", web_asset_index_html_start, web_asset_index_html_end },
@@ -40,6 +84,10 @@ static const struct web_asset assets[] = {
 
 static bool started;
 static struct k_thread web_thread;
+static uint8_t ota_rx_buf[WEB_APP_RX_BUF_SIZE];
+#ifdef CONFIG_ZTEST
+static bool web_app_test_force_ota_upload_disallowed;
+#endif
 K_THREAD_STACK_DEFINE(web_stack, 4096);
 
 static int send_all(int fd, const char *data, size_t len)
@@ -47,7 +95,7 @@ static int send_all(int fd, const char *data, size_t len)
 	size_t sent_total = 0;
 
 	while (sent_total < len) {
-		ssize_t sent = zsock_send(fd, data + sent_total, len - sent_total, 0);
+		ssize_t sent = web_send(fd, data + sent_total, len - sent_total, 0);
 
 		if (sent > 0) {
 			sent_total += sent;
@@ -64,8 +112,8 @@ static int send_all(int fd, const char *data, size_t len)
 	return 0;
 }
 
-static void write_response_header(int fd, const char *status, const char *content_type,
-				  size_t content_len)
+static int write_response_header(int fd, const char *status, const char *content_type,
+				 size_t content_len)
 {
 	char header[192];
 	int header_len = snprintk(header, sizeof(header),
@@ -73,35 +121,133 @@ static void write_response_header(int fd, const char *status, const char *conten
 			       "Connection: close\r\nCache-Control: no-store\r\n\r\n",
 			       status, content_type, content_len);
 
-	if (header_len > 0) {
-		(void)send_all(fd, header, (size_t)header_len);
+	if (header_len <= 0) {
+		return -EINVAL;
 	}
+
+	return send_all(fd, header, (size_t)header_len);
 }
 
-static void write_text_response(int fd, const char *status, const char *content_type,
-				const char *body)
+static int write_text_response(int fd, const char *status, const char *content_type,
+			       const char *body)
 {
-	write_response_header(fd, status, content_type, strlen(body));
-	(void)send_all(fd, body, strlen(body));
+	int ret = write_response_header(fd, status, content_type, strlen(body));
+
+	if (ret != 0) {
+		return ret;
+	}
+
+	return send_all(fd, body, strlen(body));
 }
 
 static void write_asset_response(int fd, const struct web_asset *asset)
 {
 	size_t len = (size_t)(asset->end - asset->start);
 
-	write_response_header(fd, "200 OK", asset->content_type, len);
-	(void)send_all(fd, asset->start, len);
+	if (write_response_header(fd, "200 OK", asset->content_type, len) == 0) {
+		(void)send_all(fd, asset->start, len);
+	}
 }
 
-static void write_status_json(int fd)
+static const char *web_ota_state_name(enum ota_update_state state)
+{
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	return ota_update_state_name(state);
+#else
+	ARG_UNUSED(state);
+	return "disabled";
+#endif
+}
+
+static void get_ota_status_for_json(struct ota_update_status *status)
+{
+	memset(status, 0, sizeof(*status));
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	ota_update_get_status(status);
+#else
+	status->enabled = false;
+	status->state = OTA_UPDATE_STATE_DISABLED;
+	status->confirmed = true;
+#endif
+}
+
+static void json_escape_string(const char *src, char *dst, size_t dst_len)
+{
+	size_t out = 0U;
+
+	if (dst_len == 0U) {
+		return;
+	}
+
+	for (; src != NULL && *src != '\0' && out + 1U < dst_len; src++) {
+		unsigned char ch = (unsigned char)*src;
+		const char *escape = NULL;
+
+		switch (ch) {
+		case '\\':
+			escape = "\\\\";
+			break;
+		case '"':
+			escape = "\\\"";
+			break;
+		case '\b':
+			escape = "\\b";
+			break;
+		case '\f':
+			escape = "\\f";
+			break;
+		case '\n':
+			escape = "\\n";
+			break;
+		case '\r':
+			escape = "\\r";
+			break;
+		case '\t':
+			escape = "\\t";
+			break;
+		default:
+			break;
+		}
+
+		if (escape != NULL) {
+			size_t escape_len = strlen(escape);
+
+			if (out + escape_len >= dst_len) {
+				break;
+			}
+			memcpy(dst + out, escape, escape_len);
+			out += escape_len;
+		} else if (ch >= 0x20U) {
+			dst[out++] = (char)ch;
+		}
+	}
+	dst[out] = '\0';
+}
+
+static bool ota_upload_allowed(void)
+{
+#ifdef CONFIG_ZTEST
+	if (web_app_test_force_ota_upload_disallowed) {
+		return false;
+	}
+#endif
+	return IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE) &&
+	       IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_OTA_UPLOAD_TRUSTED_NETWORK_ENABLE);
+}
+
+static int write_status_json(int fd)
 {
 	struct bridge_telemetry_snapshot snapshot;
+	struct ota_update_status ota_status;
 	const struct bridge_telemetry_counters *counters = &snapshot.counters;
 	const char *connection_state;
 	const char *input_state;
-	char body[WEB_APP_JSON_BUF_SIZE];
+	static char body[WEB_APP_JSON_BUF_SIZE];
+	char escaped_last_error[OTA_UPDATE_LAST_ERROR_LEN * 2U];
 
 	bridge_telemetry_get_snapshot(&snapshot);
+	get_ota_status_for_json(&ota_status);
+	json_escape_string(ota_status.last_error, escaped_last_error, sizeof(escaped_last_error));
 	connection_state = snapshot.connection_state == BRIDGE_TELEMETRY_NMEA_CONNECTED ?
 		"connected" : "disconnected";
 	input_state = snapshot.input_state == BRIDGE_TELEMETRY_NMEA_INPUT_ACTIVE ?
@@ -117,7 +263,10 @@ static void write_status_json(int fd)
 		"\"sink_dropped_oldest\":%u,\"publish_no_sinks\":%u,"
 		"\"publish_invalid\":%u,\"publish_oversize\":%u},"
 		"\"tcp\":{\"active_sessions\":%u},"
-		"\"tcp_server\":{\"active_peers\":%u,\"max_peers\":%u}}",
+		"\"tcp_server\":{\"active_peers\":%u,\"max_peers\":%u},"
+		"\"ota\":{\"enabled\":%s,\"state\":\"%s\",\"uploaded_bytes\":%zu,"
+		"\"expected_bytes\":%zu,\"max_upload_bytes\":%zu,\"upload_allowed\":%s,"
+		"\"slot\":%u,\"confirmed\":%s,\"last_error\":\"%s\"}}",
 		connection_state, input_state,
 		snapshot.warnings.data_quality ? "true" : "false",
 		snapshot.warnings.frame_loss ? "true" : "false",
@@ -128,9 +277,21 @@ static void write_status_json(int fd)
 		counters->bridge_sink_dropped_oldest, counters->bridge_publish_no_sinks,
 		counters->bridge_publish_invalid, counters->bridge_publish_oversize,
 		counters->tcp_nmea_active_sessions,
-		counters->tcp_server_active_peers, counters->tcp_server_max_peers);
+		counters->tcp_server_active_peers, counters->tcp_server_max_peers,
+		ota_status.enabled ? "true" : "false",
+		web_ota_state_name(ota_status.state), ota_status.uploaded_bytes,
+		ota_status.expected_bytes, ota_status.max_upload_bytes,
+		ota_upload_allowed() ? "true" : "false", ota_status.slot,
+		ota_status.confirmed ? "true" : "false", escaped_last_error);
 
-	write_text_response(fd, "200 OK", "application/json", body);
+	int ret = write_text_response(fd, "200 OK", "application/json", body);
+
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	if (ret == 0) {
+		ota_update_self_check_web_reachable();
+	}
+#endif
+	return ret;
 }
 
 static const struct web_asset *find_asset(const char *path, size_t path_len)
@@ -144,46 +305,341 @@ static const struct web_asset *find_asset(const char *path, size_t path_len)
 	return NULL;
 }
 
+static bool token_equals(const char *token, size_t token_len, const char *expected)
+{
+	return strlen(expected) == token_len && strncmp(token, expected, token_len) == 0;
+}
+
+static bool header_name_equals(const char *name, size_t name_len, const char *expected)
+{
+	if (strlen(expected) != name_len) {
+		return false;
+	}
+
+	for (size_t i = 0; i < name_len; i++) {
+		char got = name[i];
+		char want = expected[i];
+
+		if (got >= 'A' && got <= 'Z') {
+			got = (char)(got - 'A' + 'a');
+		}
+		if (want >= 'A' && want <= 'Z') {
+			want = (char)(want - 'A' + 'a');
+		}
+		if (got != want) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static const char *find_header_end(const char *request, size_t len)
+{
+	if (len < 4U) {
+		return NULL;
+	}
+
+	for (size_t i = 0; i <= len - 4U; i++) {
+		if (request[i] == '\r' && request[i + 1U] == '\n' &&
+		    request[i + 2U] == '\r' && request[i + 3U] == '\n') {
+			return &request[i];
+		}
+	}
+
+	return NULL;
+}
+
+static int parse_content_length(const char *value, size_t *content_length)
+{
+	size_t parsed = 0U;
+	bool saw_digit = false;
+
+	while (*value == ' ' || *value == '\t') {
+		value++;
+	}
+
+	while (*value >= '0' && *value <= '9') {
+		size_t digit = (size_t)(*value - '0');
+
+		if (parsed > (SIZE_MAX - digit) / 10U) {
+			return -EOVERFLOW;
+		}
+		parsed = parsed * 10U + digit;
+		saw_digit = true;
+		value++;
+	}
+
+	while (*value == ' ' || *value == '\t') {
+		value++;
+	}
+
+	if (!saw_digit || *value != '\0') {
+		return -EINVAL;
+	}
+
+	*content_length = parsed;
+	return 0;
+}
+
+static int parse_http_request(char *request, size_t received, size_t header_len,
+			      struct http_request *parsed)
+{
+	char *line_end = strstr(request, "\r\n");
+	char *method_end;
+	char *path_end;
+
+	memset(parsed, 0, sizeof(*parsed));
+	if (line_end == NULL) {
+		return -EINVAL;
+	}
+
+	method_end = memchr(request, ' ', (size_t)(line_end - request));
+	if (method_end == NULL) {
+		return -EINVAL;
+	}
+
+	parsed->method = request;
+	parsed->method_len = (size_t)(method_end - request);
+	parsed->path = method_end + 1;
+	path_end = memchr(parsed->path, ' ', (size_t)(line_end - parsed->path));
+	if (path_end == NULL) {
+		return -EINVAL;
+	}
+	parsed->path_len = (size_t)(path_end - parsed->path);
+
+	for (char *line = line_end + 2; *line != '\0'; line = line_end + 2) {
+		char *colon;
+
+		line_end = strstr(line, "\r\n");
+		if (line_end == NULL || line_end == line) {
+			break;
+		}
+		*line_end = '\0';
+		colon = strchr(line, ':');
+		if (colon == NULL) {
+			continue;
+		}
+		if (header_name_equals(line, (size_t)(colon - line), "Content-Length")) {
+			int ret = parse_content_length(colon + 1, &parsed->content_length);
+
+			if (ret != 0) {
+				return ret;
+			}
+			parsed->has_content_length = true;
+		}
+	}
+
+	parsed->body = (const uint8_t *)(request + header_len);
+	parsed->body_len = received - header_len;
+	return 0;
+}
+
+static int read_http_request(int fd, char *request, size_t request_size,
+			     struct http_request *parsed)
+{
+	size_t received = 0U;
+	const char *header_end;
+
+	for (;;) {
+		ssize_t chunk = web_recv(fd, request + received, request_size - received, 0);
+
+		if (chunk < 0 && errno == EINTR) {
+			continue;
+		}
+		if (chunk <= 0) {
+			return -ENOTCONN;
+		}
+		received += (size_t)chunk;
+		header_end = find_header_end(request, received);
+		if (header_end != NULL) {
+			size_t header_len = (size_t)(header_end - request) + 4U;
+
+			request[header_len - 2U] = '\0';
+			return parse_http_request(request, received, header_len, parsed);
+		}
+		if (received == request_size) {
+			return -EOVERFLOW;
+		}
+	}
+}
+
+static int write_ota_error_response(int fd, const char *status, const char *message)
+{
+	char body[160];
+	int len = snprintk(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}\n", message);
+
+	if (len < 0) {
+		return -EINVAL;
+	}
+	return write_text_response(fd, status, "application/json", body);
+}
+
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+static int write_ota_success_response(int fd)
+{
+	const char body[] = "{\"ok\":true,\"state\":\"pending_reboot\"}\n";
+
+	return write_text_response(fd, "200 OK", "application/json", body);
+}
+
+static int write_ota_body_chunk(const uint8_t *data, size_t len, size_t *uploaded)
+{
+	int ret;
+
+	if (len == 0U) {
+		return 0;
+	}
+
+	ret = ota_update_write(data, len);
+	if (ret == 0) {
+		*uploaded += len;
+	}
+	return ret;
+}
+
+static int set_ota_receive_timeout(int fd)
+{
+	struct timeval timeout = {
+		.tv_sec = WEB_APP_OTA_RECV_TIMEOUT_MS / 1000,
+		.tv_usec = (WEB_APP_OTA_RECV_TIMEOUT_MS % 1000) * 1000,
+	};
+
+	if (web_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) {
+		return -errno;
+	}
+
+	return 0;
+}
+#endif
+
+static void handle_ota_upload(int fd, const struct http_request *request)
+{
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	size_t uploaded = 0U;
+	int ret;
+#endif
+
+	if (!ota_upload_allowed()) {
+		(void)write_ota_error_response(fd, "403 Forbidden", "OTA uploads are disabled");
+		return;
+	}
+	if (!request->has_content_length) {
+		(void)write_ota_error_response(fd, "411 Length Required", "Content-Length required");
+		return;
+	}
+	if (request->body_len > request->content_length) {
+		(void)write_ota_error_response(fd, "400 Bad Request", "body exceeds Content-Length");
+		return;
+	}
+
+#ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
+	ret = set_ota_receive_timeout(fd);
+	if (ret != 0) {
+		(void)write_ota_error_response(fd, "500 Internal Server Error",
+					 "configuring OTA receive timeout failed");
+		return;
+	}
+
+	ret = ota_update_begin(request->content_length);
+	if (ret != 0) {
+		const char *status = ret == -EFBIG ? "413 Payload Too Large" : "400 Bad Request";
+
+		(void)write_ota_error_response(fd, status, "invalid OTA upload size");
+		return;
+	}
+
+	ret = write_ota_body_chunk(request->body, request->body_len, &uploaded);
+	while (ret == 0 && uploaded < request->content_length) {
+		size_t remaining = request->content_length - uploaded;
+		size_t want = MIN(sizeof(ota_rx_buf), remaining);
+		ssize_t received = web_recv(fd, ota_rx_buf, want, 0);
+
+		if (received < 0 && errno == EINTR) {
+			continue;
+		}
+		if (received <= 0) {
+			ota_update_abort("OTA upload connection closed early");
+			(void)write_ota_error_response(fd, "400 Bad Request", "upload ended early");
+			return;
+		}
+		ret = write_ota_body_chunk(ota_rx_buf, (size_t)received, &uploaded);
+	}
+
+	if (ret != 0) {
+		ota_update_abort("OTA image write failed");
+		(void)write_ota_error_response(fd, "500 Internal Server Error",
+					 "writing OTA image failed");
+		return;
+	}
+
+	ret = ota_update_finish();
+	if (ret != 0) {
+		ota_update_abort("OTA image finish failed");
+		(void)write_ota_error_response(fd, "500 Internal Server Error",
+					 "finishing OTA image failed");
+		return;
+	}
+
+	ret = write_ota_success_response(fd);
+	ota_update_schedule_reboot();
+	if (ret != 0) {
+		LOG_WRN("OTA success response failed after test boot request: %d", ret);
+		return;
+	}
+#else
+	ARG_UNUSED(request);
+#endif
+}
+
 static void handle_client(int fd)
 {
 	char request[WEB_APP_RX_BUF_SIZE];
-	char *path;
-	char *path_end;
-	ssize_t received = zsock_recv(fd, request, sizeof(request) - 1, 0);
+	struct http_request parsed;
+	int ret = read_http_request(fd, request, sizeof(request), &parsed);
 
-	if (received <= 0) {
+	if (ret != 0) {
+		write_text_response(fd, "400 Bad Request", "text/plain; charset=utf-8", "bad request\n");
 		return;
 	}
-	request[received] = '\0';
 
-	if (strncmp(request, "GET ", 4) != 0) {
+	if (token_equals(parsed.method, parsed.method_len, "GET")) {
+		if (token_equals(parsed.path, parsed.path_len, "/api/status")) {
+			write_status_json(fd);
+			return;
+		}
+
+		const struct web_asset *asset = find_asset(parsed.path, parsed.path_len);
+
+		if (asset != NULL) {
+			write_asset_response(fd, asset);
+			return;
+		}
+	} else if (token_equals(parsed.method, parsed.method_len, "POST")) {
+		if (token_equals(parsed.path, parsed.path_len, WEB_APP_OTA_UPLOAD_PATH)) {
+			handle_ota_upload(fd, &parsed);
+			return;
+		}
+	} else {
 		write_text_response(fd, "405 Method Not Allowed", "text/plain; charset=utf-8",
 				    "method not allowed\n");
 		return;
 	}
 
-	path = &request[4];
-	path_end = strchr(path, ' ');
-	if (path_end == NULL) {
-		write_text_response(fd, "400 Bad Request", "text/plain; charset=utf-8", "bad request\n");
-		return;
-	}
-
-	if (strncmp(path, "/api/status", (size_t)(path_end - path)) == 0 &&
-	    (size_t)(path_end - path) == strlen("/api/status")) {
-		write_status_json(fd);
-		return;
-	}
-
-	const struct web_asset *asset = find_asset(path, (size_t)(path_end - path));
-
-	if (asset != NULL) {
-		write_asset_response(fd, asset);
-		return;
-	}
-
 	write_text_response(fd, "404 Not Found", "text/plain; charset=utf-8", "not found\n");
 }
+
+#ifdef CONFIG_ZTEST
+void web_app_test_handle_client(int fd)
+{
+	handle_client(fd);
+}
+
+void web_app_test_set_ota_upload_disallowed(bool disallowed)
+{
+	web_app_test_force_ota_upload_disallowed = disallowed;
+}
+#endif
 
 static void web_app_thread(void *a, void *b, void *c)
 {
@@ -193,34 +649,34 @@ static void web_app_thread(void *a, void *b, void *c)
 
 	struct sockaddr_in addr = { 0 };
 	int opt = 1;
-	int listen_fd = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	int listen_fd = web_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
 	if (listen_fd < 0) {
 		LOG_ERR("HTTP socket failed: errno=%d", errno);
 		return;
 	}
 
-	(void)zsock_setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	(void)web_setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(WEB_APP_HTTP_PORT);
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-	if (zsock_bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+	if (web_bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		LOG_ERR("HTTP bind failed: errno=%d", errno);
-		(void)zsock_close(listen_fd);
+		(void)web_close(listen_fd);
 		return;
 	}
 
-	if (zsock_listen(listen_fd, 2) < 0) {
+	if (web_listen(listen_fd, 2) < 0) {
 		LOG_ERR("HTTP listen failed: errno=%d", errno);
-		(void)zsock_close(listen_fd);
+		(void)web_close(listen_fd);
 		return;
 	}
 
 	LOG_INF("Web app listening on 0.0.0.0:%d", WEB_APP_HTTP_PORT);
 
 	for (;;) {
-		int fd = zsock_accept(listen_fd, NULL, NULL);
+		int fd = web_accept(listen_fd, NULL, NULL);
 
 		if (fd < 0) {
 			LOG_WRN("HTTP accept failed: errno=%d", errno);
@@ -229,7 +685,7 @@ static void web_app_thread(void *a, void *b, void *c)
 		}
 
 		handle_client(fd);
-		(void)zsock_close(fd);
+		(void)web_close(fd);
 	}
 }
 
