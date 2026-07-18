@@ -58,7 +58,7 @@ LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 #define WEB_APP_RX_BUF_SIZE 1024
 #define WEB_APP_JSON_BUF_SIZE 1536
 #define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
-#define WEB_APP_OTA_RECV_TIMEOUT_MS 5000
+#define WEB_APP_RECV_TIMEOUT_MS 5000
 #define WEB_APP_CONFIG_PATH "/api/config"
 #define WEB_APP_CONFIG_BODY_MAX 256
 
@@ -575,11 +575,14 @@ static int write_ota_body_chunk(const uint8_t *data, size_t len, size_t *uploade
 	return ret;
 }
 
-static int set_ota_receive_timeout(int fd)
+#endif
+
+/* Bounds every receive so one stalled client cannot wedge the single server thread. */
+static int set_receive_timeout(int fd)
 {
 	struct timeval timeout = {
-		.tv_sec = WEB_APP_OTA_RECV_TIMEOUT_MS / 1000,
-		.tv_usec = (WEB_APP_OTA_RECV_TIMEOUT_MS % 1000) * 1000,
+		.tv_sec = WEB_APP_RECV_TIMEOUT_MS / 1000,
+		.tv_usec = (WEB_APP_RECV_TIMEOUT_MS % 1000) * 1000,
 	};
 
 	if (web_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) {
@@ -588,7 +591,6 @@ static int set_ota_receive_timeout(int fd)
 
 	return 0;
 }
-#endif
 
 static void handle_ota_upload(int fd, const struct http_request *request)
 {
@@ -611,13 +613,6 @@ static void handle_ota_upload(int fd, const struct http_request *request)
 	}
 
 #ifdef CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
-	ret = set_ota_receive_timeout(fd);
-	if (ret != 0) {
-		(void)write_ota_error_response(fd, "500 Internal Server Error",
-					 "configuring OTA receive timeout failed");
-		return;
-	}
-
 	ret = ota_update_begin(request->content_length);
 	if (ret != 0) {
 		const char *status = ret == -EFBIG ? "413 Payload Too Large" : "400 Bad Request";
@@ -674,7 +669,12 @@ static int read_remaining_body(int fd, char *request, size_t request_size,
 {
 	size_t body_offset = (size_t)((const char *)parsed->body - request);
 
-	if (parsed->content_length > request_size - body_offset) {
+	/*
+	 * Strict bound: Zephyr's JSON number decoder temporarily writes a NUL
+	 * one byte past the last token, so the body must not end flush with
+	 * the buffer.
+	 */
+	if (parsed->content_length >= request_size - body_offset) {
 		return -EOVERFLOW;
 	}
 
@@ -761,7 +761,15 @@ static void handle_client(int fd)
 {
 	char request[WEB_APP_RX_BUF_SIZE];
 	struct http_request parsed;
-	int ret = read_http_request(fd, request, sizeof(request), &parsed);
+	int ret;
+
+	if (set_receive_timeout(fd) != 0) {
+		write_text_response(fd, "500 Internal Server Error", "text/plain; charset=utf-8",
+				    "configuring receive timeout failed\n");
+		return;
+	}
+
+	ret = read_http_request(fd, request, sizeof(request), &parsed);
 
 	if (ret != 0) {
 		write_text_response(fd, "400 Bad Request", "text/plain; charset=utf-8", "bad request\n");

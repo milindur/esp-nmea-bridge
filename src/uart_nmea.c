@@ -25,32 +25,28 @@ static const struct device *const nmea_uart = DEVICE_DT_GET(NMEA_UART_NODE);
 static struct uart_nmea_stats uart_stats;
 static bool started;
 
-/* Owned by the RX thread; reconfigured between frames via the atomics below. */
+/*
+ * Owned by the RX thread; reconfigured between frames. The single atomic
+ * carries the effective MMSI (0 = filter inactive), so the RX thread always
+ * sees a coherent enable/MMSI combination.
+ */
 static struct ais_mmsi_filter ais_filter;
-static atomic_t ais_cfg_enabled;
-static atomic_t ais_cfg_mmsi;
-static atomic_t ais_cfg_generation;
+static atomic_t ais_effective_mmsi;
 
 void uart_nmea_set_ais_config(bool filter_enabled, uint32_t own_mmsi)
 {
-	atomic_set(&ais_cfg_enabled, filter_enabled ? 1 : 0);
-	atomic_set(&ais_cfg_mmsi, (atomic_val_t)own_mmsi);
-	atomic_inc(&ais_cfg_generation);
+	atomic_set(&ais_effective_mmsi, filter_enabled ? (atomic_val_t)own_mmsi : 0);
 }
 
-static void apply_ais_config_if_changed(atomic_val_t *applied_generation)
+static void apply_ais_config_if_changed(atomic_val_t *applied_mmsi)
 {
-	atomic_val_t generation = atomic_get(&ais_cfg_generation);
+	atomic_val_t mmsi = atomic_get(&ais_effective_mmsi);
 
-	if (generation == *applied_generation) {
+	if (mmsi == *applied_mmsi) {
 		return;
 	}
-	*applied_generation = generation;
-
-	uint32_t mmsi = atomic_get(&ais_cfg_enabled) != 0 ?
-		(uint32_t)atomic_get(&ais_cfg_mmsi) : 0U;
-
-	ais_mmsi_filter_init(&ais_filter, mmsi);
+	*applied_mmsi = mmsi;
+	ais_mmsi_filter_init(&ais_filter, (uint32_t)mmsi);
 }
 
 static void uart_rx_thread(void *a, void *b, void *c)
@@ -62,13 +58,13 @@ static void uart_rx_thread(void *a, void *b, void *c)
 	uint8_t frame[CONFIG_ESP_NMEA_BRIDGE_NMEA_FRAME_MAX_LEN];
 	size_t frame_len = 0;
 	bool dropping_overlong = false;
-	atomic_val_t applied_generation = -1;
+	atomic_val_t applied_mmsi = 0;
 
 	for (;;) {
 		unsigned char ch;
 		bool got = false;
 
-		apply_ais_config_if_changed(&applied_generation);
+		apply_ais_config_if_changed(&applied_mmsi);
 
 		while (uart_poll_in(nmea_uart, &ch) == 0) {
 			got = true;

@@ -24,8 +24,25 @@ int bridge_config_test_settings_save_one(const char *name, const void *value, si
 LOG_MODULE_REGISTER(bridge_config, LOG_LEVEL_INF);
 
 #define BRIDGE_CONFIG_SUBTREE "bridge"
-#define BRIDGE_CONFIG_KEY_AIS_ENABLED "bridge/ais_filter_enabled"
-#define BRIDGE_CONFIG_KEY_AIS_MMSI "bridge/ais_own_mmsi"
+#define BRIDGE_CONFIG_KEY_AIS "bridge/ais"
+
+/*
+ * Both AIS fields travel in one stored record so a save is atomic at the
+ * NVS level: [0] enabled flag, [1..4] own MMSI in native byte order.
+ */
+#define AIS_RECORD_LEN 5U
+
+static void ais_record_pack(const struct bridge_config_ais *src, uint8_t record[AIS_RECORD_LEN])
+{
+	record[0] = src->filter_enabled ? 1U : 0U;
+	memcpy(&record[1], &src->own_mmsi, sizeof(src->own_mmsi));
+}
+
+static void ais_record_unpack(const uint8_t record[AIS_RECORD_LEN], struct bridge_config_ais *dst)
+{
+	dst->filter_enabled = record[0] != 0U;
+	memcpy(&dst->own_mmsi, &record[1], sizeof(dst->own_mmsi));
+}
 
 static struct bridge_config_ais ais = {
 	.filter_enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE),
@@ -37,29 +54,21 @@ static bridge_config_listener_t listener;
 static int bridge_config_settings_set(const char *name, size_t len,
 				      settings_read_cb read_cb, void *cb_arg)
 {
-	if (strcmp(name, "ais_filter_enabled") == 0) {
-		uint8_t enabled;
+	if (strcmp(name, "ais") == 0) {
+		uint8_t record[AIS_RECORD_LEN];
+		struct bridge_config_ais stored;
 
-		if (len != sizeof(enabled) || read_cb(cb_arg, &enabled, sizeof(enabled)) < 0) {
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
 		}
-		k_mutex_lock(&config_lock, K_FOREVER);
-		ais.filter_enabled = enabled != 0U;
-		k_mutex_unlock(&config_lock);
-		return 0;
-	}
-
-	if (strcmp(name, "ais_own_mmsi") == 0) {
-		uint32_t mmsi;
-
-		if (len != sizeof(mmsi) || read_cb(cb_arg, &mmsi, sizeof(mmsi)) < 0 ||
-		    mmsi > BRIDGE_CONFIG_AIS_MMSI_MAX) {
-			LOG_WRN("Ignoring malformed stored %s", name);
+		ais_record_unpack(record, &stored);
+		if (stored.own_mmsi > BRIDGE_CONFIG_AIS_MMSI_MAX) {
+			LOG_WRN("Ignoring stored %s with out-of-range MMSI", name);
 			return 0;
 		}
 		k_mutex_lock(&config_lock, K_FOREVER);
-		ais.own_mmsi = mmsi;
+		ais = stored;
 		k_mutex_unlock(&config_lock);
 		return 0;
 	}
@@ -106,8 +115,8 @@ void bridge_config_set_listener(bridge_config_listener_t new_listener)
 
 int bridge_config_set_ais(const struct bridge_config_ais *next)
 {
-	bool enabled_changed;
-	bool mmsi_changed;
+	uint8_t record[AIS_RECORD_LEN];
+	bool changed;
 	int ret;
 
 	if (next == NULL || next->own_mmsi > BRIDGE_CONFIG_AIS_MMSI_MAX) {
@@ -115,31 +124,18 @@ int bridge_config_set_ais(const struct bridge_config_ais *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	enabled_changed = ais.filter_enabled != next->filter_enabled;
-	mmsi_changed = ais.own_mmsi != next->own_mmsi;
+	changed = ais.filter_enabled != next->filter_enabled || ais.own_mmsi != next->own_mmsi;
 	k_mutex_unlock(&config_lock);
 
-	if (enabled_changed) {
-		uint8_t enabled = next->filter_enabled ? 1U : 0U;
-
-		ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_AIS_ENABLED, &enabled,
-					    sizeof(enabled));
-		if (ret != 0) {
-			LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_AIS_ENABLED, ret);
-			return ret;
-		}
-	}
-	if (mmsi_changed) {
-		ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_AIS_MMSI, &next->own_mmsi,
-					    sizeof(next->own_mmsi));
-		if (ret != 0) {
-			LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_AIS_MMSI, ret);
-			return ret;
-		}
-	}
-
-	if (!enabled_changed && !mmsi_changed) {
+	if (!changed) {
 		return 0;
+	}
+
+	ais_record_pack(next, record);
+	ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_AIS, record, sizeof(record));
+	if (ret != 0) {
+		LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_AIS, ret);
+		return ret;
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);

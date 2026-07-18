@@ -75,14 +75,20 @@ static void count_listener(void)
 	listener_count++;
 }
 
-static int store_u32(const char *name, uint32_t value)
+#define AIS_RECORD_LEN 5U
+
+static void make_record(bool enabled, uint32_t mmsi, uint8_t record[AIS_RECORD_LEN])
 {
-	return bridge_config_test_settings_set(name, sizeof(value), stored_read_cb, &value);
+	record[0] = enabled ? 1U : 0U;
+	memcpy(&record[1], &mmsi, sizeof(mmsi));
 }
 
-static int store_u8(const char *name, uint8_t value)
+static int store_record(bool enabled, uint32_t mmsi)
 {
-	return bridge_config_test_settings_set(name, sizeof(value), stored_read_cb, &value);
+	uint8_t record[AIS_RECORD_LEN];
+
+	make_record(enabled, mmsi, record);
+	return bridge_config_test_settings_set("ais", sizeof(record), stored_read_cb, record);
 }
 
 static void reset_harness(void *fixture)
@@ -121,8 +127,7 @@ ZTEST(bridge_config, test_stored_values_override_defaults)
 {
 	struct bridge_config_ais ais;
 
-	zassert_equal(store_u8("ais_filter_enabled", 0U), 0);
-	zassert_equal(store_u32("ais_own_mmsi", 211000000U), 0);
+	zassert_equal(store_record(false, 211000000U), 0);
 
 	bridge_config_get_ais(&ais);
 	zassert_false(ais.filter_enabled);
@@ -132,14 +137,15 @@ ZTEST(bridge_config, test_stored_values_override_defaults)
 ZTEST(bridge_config, test_malformed_stored_values_keep_defaults)
 {
 	struct bridge_config_ais ais;
-	uint32_t oversized_mmsi = BRIDGE_CONFIG_AIS_MMSI_MAX + 1U;
 	uint8_t short_value = 1U;
+	uint8_t record[AIS_RECORD_LEN];
 
-	zassert_equal(store_u32("ais_own_mmsi", oversized_mmsi), 0);
-	zassert_equal(bridge_config_test_settings_set("ais_own_mmsi", sizeof(short_value),
+	zassert_equal(store_record(true, BRIDGE_CONFIG_AIS_MMSI_MAX + 1U), 0);
+	zassert_equal(bridge_config_test_settings_set("ais", sizeof(short_value),
 						      stored_read_cb, &short_value), 0);
-	zassert_equal(bridge_config_test_settings_set("ais_own_mmsi", sizeof(uint32_t),
-						      failing_read_cb, NULL), 0);
+	make_record(true, 1U, record);
+	zassert_equal(bridge_config_test_settings_set("ais", sizeof(record),
+						      failing_read_cb, record), 0);
 
 	bridge_config_get_ais(&ais);
 	zassert_true(ais.filter_enabled);
@@ -154,39 +160,26 @@ ZTEST(bridge_config, test_unknown_key_is_rejected)
 						      stored_read_cb, &value), -ENOENT);
 }
 
-ZTEST(bridge_config, test_set_persists_only_changed_fields)
-{
-	struct bridge_config_ais next = {
-		.filter_enabled = true,
-		.own_mmsi = 211000000U,
-	};
-	struct bridge_config_ais ais;
-
-	zassert_equal(bridge_config_set_ais(&next), 0);
-
-	zassert_equal(save_count, 1);
-	zassert_str_equal(saved[0].name, "bridge/ais_own_mmsi");
-	zassert_equal(saved[0].len, sizeof(uint32_t));
-	zassert_equal(*(uint32_t *)saved[0].value, 211000000U);
-
-	bridge_config_get_ais(&ais);
-	zassert_true(ais.filter_enabled);
-	zassert_equal(ais.own_mmsi, 211000000U);
-}
-
-ZTEST(bridge_config, test_set_persists_enable_flag)
+ZTEST(bridge_config, test_set_persists_single_atomic_record)
 {
 	struct bridge_config_ais next = {
 		.filter_enabled = false,
-		.own_mmsi = TEST_DEFAULT_MMSI,
+		.own_mmsi = 211000000U,
 	};
+	struct bridge_config_ais ais;
+	uint8_t expected[AIS_RECORD_LEN];
 
 	zassert_equal(bridge_config_set_ais(&next), 0);
 
+	make_record(false, 211000000U, expected);
 	zassert_equal(save_count, 1);
-	zassert_str_equal(saved[0].name, "bridge/ais_filter_enabled");
-	zassert_equal(saved[0].len, sizeof(uint8_t));
-	zassert_equal(saved[0].value[0], 0U);
+	zassert_str_equal(saved[0].name, "bridge/ais");
+	zassert_equal(saved[0].len, sizeof(expected));
+	zassert_mem_equal(saved[0].value, expected, sizeof(expected));
+
+	bridge_config_get_ais(&ais);
+	zassert_false(ais.filter_enabled);
+	zassert_equal(ais.own_mmsi, 211000000U);
 }
 
 ZTEST(bridge_config, test_set_rejects_out_of_range_mmsi_without_saving)
