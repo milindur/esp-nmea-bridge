@@ -2,6 +2,9 @@
 
 #include <string.h>
 
+#include <esp_rom_serial_output.h>
+#include <esp_rom_sys.h>
+#include <esp_system.h>
 #include <esp_wifi.h>
 
 #include <zephyr/kernel.h>
@@ -433,9 +436,41 @@ static void sta_retry_thread(void *a, void *b, void *c)
 K_THREAD_DEFINE(sta_retry_tid, 2048, sta_retry_thread, NULL, NULL, NULL,
 	       10, 0, 0);
 
+/* sys_reboot() on ESP32-C6 performs a CPU-only reset that leaves the Wi-Fi
+ * PHY/modem and the analog-I2C (regi2c) master running. If the reset hits
+ * while that state is unclean, MCUboot deadlocks in the timeout-less
+ * REGI2C_RTC_BUSY busy-wait of its clock init. Two-stage mitigation via
+ * shutdown handlers (esp_restart runs them in reverse registration order):
+ * first stop Wi-Fi to quiesce the PHY, then replace the CPU-only reset with
+ * a full digital system reset (mirroring ESP-IDF's esp_restart_noos_dig),
+ * which resets modem and regi2c master like a power-on reset would.
+ */
+extern void rtc_clk_cpu_set_to_default_config(void);
+
+static void full_system_reset_handler(void)
+{
+	(void)irq_lock();
+	esp_rom_output_tx_wait_idle(0);
+	rtc_clk_cpu_set_to_default_config();
+	esp_rom_software_reset_system();
+}
+
+static void wifi_shutdown_handler(void)
+{
+	int err = esp_wifi_stop();
+
+	esp_rom_printf("reboot: wifi stopped (%d), forcing full system reset\n", err);
+}
+
 int wifi_manager_start(void)
 {
 	int ret = 0;
+
+	/* Registered first so it runs last, after wifi_shutdown_handler. */
+	if (esp_register_shutdown_handler(full_system_reset_handler) != 0 ||
+	    esp_register_shutdown_handler(wifi_shutdown_handler) != 0) {
+		LOG_WRN("registering reboot shutdown handlers failed");
+	}
 
 	net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler, WIFI_EVENT_MASK);
 	net_mgmt_add_event_callback(&wifi_cb);
