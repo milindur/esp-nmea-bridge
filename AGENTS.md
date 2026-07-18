@@ -8,7 +8,7 @@ it is mounted into a Zephyr west workspace at
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues for `milindur/esp-nmea-bridge-zephyr`. See `docs/agents/issue-tracker.md`.
+Issues and PRDs are tracked in GitHub Issues for `milindur/esp-nmea-bridge`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
