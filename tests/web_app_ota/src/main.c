@@ -51,6 +51,13 @@ static struct bridge_config_ais fake_config;
 static struct bridge_config_ais last_set_config;
 static int config_set_count;
 static int config_set_ret;
+static struct bridge_config_sta fake_sta;
+static struct bridge_config_sta last_set_sta;
+static int sta_set_count;
+static int sta_set_ret;
+static bool fake_reboot_required;
+static int reboot_request_count;
+static bool reboot_after_response;
 
 static void reset_harness(void)
 {
@@ -76,6 +83,18 @@ static void reset_harness(void)
 	fake_config.own_mmsi = 123456789U;
 	config_set_count = 0;
 	config_set_ret = 0;
+
+	memset(&fake_sta, 0, sizeof(fake_sta));
+	memset(&last_set_sta, 0, sizeof(last_set_sta));
+	fake_sta.enabled = true;
+	fake_sta.rotate_mac = true;
+	strcpy(fake_sta.ssid, "BoatNet");
+	strcpy(fake_sta.psk, "anchor123");
+	sta_set_count = 0;
+	sta_set_ret = 0;
+	fake_reboot_required = false;
+	reboot_request_count = 0;
+	reboot_after_response = false;
 
 	memset(&fake_snapshot, 0, sizeof(fake_snapshot));
 	fake_snapshot.connection_state = BRIDGE_TELEMETRY_NMEA_CONNECTED;
@@ -204,6 +223,33 @@ int bridge_config_set_ais(const struct bridge_config_ais *ais)
 		fake_config = *ais;
 	}
 	return config_set_ret;
+}
+
+void bridge_config_get_sta(struct bridge_config_sta *out)
+{
+	*out = fake_sta;
+}
+
+int bridge_config_set_sta(const struct bridge_config_sta *sta)
+{
+	sta_set_count++;
+	last_set_sta = *sta;
+	if (sta_set_ret == 0) {
+		fake_sta = *sta;
+		fake_reboot_required = true;
+	}
+	return sta_set_ret;
+}
+
+bool bridge_config_reboot_required(void)
+{
+	return fake_reboot_required;
+}
+
+void web_app_test_request_reboot(void)
+{
+	reboot_request_count++;
+	reboot_after_response = response_contains("{\"ok\":true}");
 }
 
 const char *ota_update_state_name(enum ota_update_state state)
@@ -604,4 +650,196 @@ ZTEST(web_app_config_api, test_post_save_failure_reports_500)
 	zassert_true(response_contains("saving configuration failed"));
 }
 
+static char config_post_buf[512];
+
+static void set_config_post(const char *body)
+{
+	snprintk(config_post_buf, sizeof(config_post_buf),
+		 "POST /api/config HTTP/1.1\r\nContent-Length: %zu\r\n\r\n%s",
+		 strlen(body), body);
+	set_request(config_post_buf);
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_sta_without_psk)
+{
+	reset_harness();
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_true(response_contains("\"sta_enabled\":true"));
+	zassert_true(response_contains("\"sta_ssid\":\"BoatNet\""));
+	zassert_true(response_contains("\"sta_psk_set\":true"));
+	zassert_true(response_contains("\"sta_rotate_mac\":true"));
+	zassert_true(response_contains("\"reboot_required\":false"));
+	zassert_false(response_contains("anchor123"));
+	zassert_false(response_contains("\"sta_psk\":"));
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_unset_psk)
+{
+	reset_harness();
+	fake_sta.psk[0] = '\0';
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("\"sta_psk_set\":false"));
+}
+
+ZTEST(web_app_config_api, test_post_sta_subset_changes_only_provided_fields)
+{
+	reset_harness();
+	set_config_post("{\"sta_ssid\":\"Marina\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(sta_set_count, 1);
+	zassert_str_equal(last_set_sta.ssid, "Marina");
+	zassert_true(last_set_sta.enabled);
+	zassert_true(last_set_sta.rotate_mac);
+	zassert_str_equal(last_set_sta.psk, "anchor123");
+	zassert_equal(config_set_count, 0);
+	zassert_true(response_contains("\"sta_ssid\":\"Marina\""));
+	zassert_true(response_contains("\"reboot_required\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_blank_psk_keeps_stored_psk)
+{
+	reset_harness();
+	set_config_post("{\"sta_enabled\":false,\"sta_psk\":\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(sta_set_count, 1);
+	zassert_false(last_set_sta.enabled);
+	zassert_str_equal(last_set_sta.psk, "anchor123");
+}
+
+ZTEST(web_app_config_api, test_post_new_psk_stored_but_never_echoed)
+{
+	reset_harness();
+	set_config_post("{\"sta_psk\":\"newharbour1\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(sta_set_count, 1);
+	zassert_str_equal(last_set_sta.psk, "newharbour1");
+	zassert_false(response_contains("newharbour1"));
+}
+
+ZTEST(web_app_config_api, test_post_escaped_ssid_is_unescaped)
+{
+	reset_harness();
+	set_config_post("{\"sta_ssid\":\"Boot \\\"Anna\\\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_str_equal(last_set_sta.ssid, "Boot \"Anna\"");
+}
+
+ZTEST(web_app_config_api, test_post_empty_ssid_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"sta_ssid\":\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"sta_ssid\":"));
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_overlong_ssid_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"sta_ssid\":\"123456789012345678901234567890123\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"sta_ssid\":"));
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_short_psk_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"sta_psk\":\"short\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"sta_psk\":"));
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_invalid_sta_field_saves_nothing)
+{
+	reset_harness();
+	set_config_post("{\"ais_own_mmsi\":211000000,\"sta_psk\":\"short\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(sta_set_count, 0);
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_ais_only_does_not_touch_sta)
+{
+	reset_harness();
+	set_config_post("{\"ais_own_mmsi\":211000000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(config_set_count, 1);
+	zassert_equal(sta_set_count, 0);
+	zassert_true(response_contains("\"reboot_required\":false"));
+}
+
+ZTEST(web_app_config_api, test_post_sta_save_failure_reports_500)
+{
+	reset_harness();
+	sta_set_ret = -EIO;
+	set_config_post("{\"sta_ssid\":\"Marina\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("saving configuration failed"));
+}
+
 ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);
+
+ZTEST(web_app_reboot, test_post_reboot_responds_before_reboot_request)
+{
+	reset_harness();
+	set_request("POST /api/reboot HTTP/1.1\r\nContent-Length: 0\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_true(response_contains("{\"ok\":true}"));
+	zassert_equal(reboot_request_count, 1);
+	zassert_true(reboot_after_response);
+}
+
+ZTEST(web_app_reboot, test_get_reboot_is_not_found)
+{
+	reset_harness();
+	set_request("GET /api/reboot HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 404 Not Found"));
+	zassert_equal(reboot_request_count, 0);
+}
+
+ZTEST_SUITE(web_app_reboot, NULL, NULL, NULL, NULL, NULL);

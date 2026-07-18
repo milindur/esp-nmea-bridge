@@ -106,6 +106,44 @@
     </section>
 
     <section id="view-config" role="tabpanel" aria-labelledby="tab-config" hidden>
+      <div id="reboot-banner" class="alert-reboot" role="status" aria-live="polite" hidden>
+        <div class="alert-reboot-text">
+          <strong>Reboot required</strong>
+          <span>Saved changes take effect after the next reboot. Finish editing, then reboot once.</span>
+        </div>
+        <button id="reboot-button" class="button" type="button">Reboot now</button>
+      </div>
+
+      <section class="panel" aria-labelledby="sta-config-title">
+        <header class="panel-header">
+          <h2 id="sta-config-title">Wi-Fi station</h2>
+          <span id="sta-reboot-badge" class="badge state-warn" hidden>Reboot required</span>
+        </header>
+        <form id="sta-config-form" class="config-form" aria-describedby="sta-config-help">
+          <p id="sta-config-help" class="config-help">Joins your boat or marina Wi-Fi. Changes are stored immediately but take effect after the next reboot. The access point stays available regardless.</p>
+          <label class="config-check" for="sta-enabled">
+            <input id="sta-enabled" type="checkbox">
+            <span>Enable station mode</span>
+          </label>
+          <label class="config-field" for="sta-ssid">
+            <span class="label">Network SSID</span>
+            <input id="sta-ssid" type="text" autocomplete="off" spellcheck="false">
+            <span id="sta-ssid-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <label class="config-field" for="sta-psk">
+            <span class="label">Password</span>
+            <input id="sta-psk" type="password" autocomplete="new-password">
+            <span id="sta-psk-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <label class="config-check" for="sta-rotate-mac">
+            <input id="sta-rotate-mac" type="checkbox">
+            <span>Randomise MAC address on every boot</span>
+          </label>
+          <button id="sta-save" class="button" type="submit" disabled>Save</button>
+          <p id="sta-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+        </form>
+      </section>
+
       <section class="panel" aria-labelledby="ais-config-title">
         <header class="panel-header">
           <h2 id="ais-config-title">AIS self-MMSI filter</h2>

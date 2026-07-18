@@ -1,5 +1,7 @@
 #include "wifi_manager.h"
 
+#include "bridge_config.h"
+
 #include <string.h>
 
 #include <esp_rom_serial_output.h>
@@ -35,6 +37,8 @@ LOG_MODULE_REGISTER(wifi_manager, LOG_LEVEL_INF);
 
 static struct net_if *ap_iface;
 static struct net_if *sta_iface;
+/* Effective STA configuration, captured once at boot; STA is reboot-scope. */
+static struct bridge_config_sta sta_cfg;
 static struct net_mgmt_event_callback wifi_cb;
 static struct net_mgmt_event_callback ipv4_cb;
 static bool sta_connected;
@@ -116,7 +120,7 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t mgmt
 			sta_ipv4_logged = false;
 			sta_connect_requested = false;
 			LOG_WRN("STA connect to %s failed: status=%d (%s); retry in %us",
-				CONFIG_ESP_NMEA_BRIDGE_STA_SSID, status->status,
+				sta_cfg.ssid, status->status,
 				wifi_conn_status_txt(status->conn_status), sta_retry_backoff_s);
 			break;
 		}
@@ -124,7 +128,7 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t mgmt
 		sta_connected = true;
 		sta_connect_requested = false;
 		sta_retry_backoff_s = 5;
-		LOG_INF("STA connected to %s", CONFIG_ESP_NMEA_BRIDGE_STA_SSID);
+		LOG_INF("STA connected to %s", sta_cfg.ssid);
 		(void)mark_sta_ipv4_ready();
 		break;
 	}
@@ -136,7 +140,7 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint64_t mgmt
 		sta_has_addr = false;
 		sta_ipv4_logged = false;
 		sta_connect_requested = false;
-		LOG_INF("STA disconnected from %s", CONFIG_ESP_NMEA_BRIDGE_STA_SSID);
+		LOG_INF("STA disconnected from %s", sta_cfg.ssid);
 		break;
 	case NET_EVENT_WIFI_AP_ENABLE_RESULT:
 		LOG_INF("SoftAP enabled");
@@ -287,7 +291,7 @@ static void rotate_sta_mac(void)
 	bool was_up;
 	int ret;
 
-	if (!IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ROTATE_MAC) || sta_iface == NULL) {
+	if (!sta_cfg.enabled || !sta_cfg.rotate_mac || sta_iface == NULL) {
 		return;
 	}
 
@@ -365,16 +369,16 @@ static int connect_sta(void)
 		return -ENODEV;
 	}
 
-	if (strlen(CONFIG_ESP_NMEA_BRIDGE_STA_SSID) == 0) {
+	if (strlen(sta_cfg.ssid) == 0) {
 		LOG_WRN("STA SSID empty; STA connect skipped");
 		return 0;
 	}
 
 	memset(&sta_config, 0, sizeof(sta_config));
-	sta_config.ssid = (const uint8_t *)CONFIG_ESP_NMEA_BRIDGE_STA_SSID;
-	sta_config.ssid_length = strlen(CONFIG_ESP_NMEA_BRIDGE_STA_SSID);
-	sta_config.psk = (const uint8_t *)CONFIG_ESP_NMEA_BRIDGE_STA_PSK;
-	sta_config.psk_length = strlen(CONFIG_ESP_NMEA_BRIDGE_STA_PSK);
+	sta_config.ssid = (const uint8_t *)sta_cfg.ssid;
+	sta_config.ssid_length = strlen(sta_cfg.ssid);
+	sta_config.psk = (const uint8_t *)sta_cfg.psk;
+	sta_config.psk_length = strlen(sta_cfg.psk);
 	sta_config.security = sta_config.psk_length == 0 ? WIFI_SECURITY_TYPE_NONE : WIFI_SECURITY_TYPE_PSK;
 	sta_config.channel = WIFI_CHANNEL_ANY;
 	sta_config.band = WIFI_FREQ_BAND_2_4_GHZ;
@@ -389,7 +393,7 @@ static int connect_sta(void)
 	sta_connect_requested = true;
 	disable_sta_power_save();
 	LOG_INF("STA connect requested: ssid=%s security=%s channel=any",
-		CONFIG_ESP_NMEA_BRIDGE_STA_SSID, wifi_security_txt(sta_config.security));
+		sta_cfg.ssid, wifi_security_txt(sta_config.security));
 	return 0;
 }
 
@@ -399,13 +403,15 @@ static void sta_retry_thread(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
-	if (!IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ENABLE) ||
-	    strlen(CONFIG_ESP_NMEA_BRIDGE_STA_SSID) == 0) {
-		return;
-	}
-
+	/* The effective STA configuration is only captured once
+	 * wifi_manager_start() ran, which also sets sta_retry_enabled.
+	 */
 	while (!sta_retry_enabled) {
 		k_sleep(K_SECONDS(1));
+	}
+
+	if (!sta_cfg.enabled || strlen(sta_cfg.ssid) == 0) {
+		return;
 	}
 
 	for (;;) {
@@ -421,7 +427,7 @@ static void sta_retry_thread(void *a, void *b, void *c)
 		}
 
 		LOG_INF("STA reconnecting to %s after %us backoff",
-			CONFIG_ESP_NMEA_BRIDGE_STA_SSID, sta_retry_backoff_s);
+			sta_cfg.ssid, sta_retry_backoff_s);
 		disconnect_sta();
 		k_sleep(K_MSEC(500));
 
@@ -466,6 +472,9 @@ int wifi_manager_start(void)
 {
 	int ret = 0;
 
+	/* STA settings are reboot-scope: capture the effective values once. */
+	bridge_config_get_sta(&sta_cfg);
+
 	/* Registered first so it runs last, after wifi_shutdown_handler. */
 	if (esp_register_shutdown_handler(full_system_reset_handler) != 0 ||
 	    esp_register_shutdown_handler(wifi_shutdown_handler) != 0) {
@@ -493,7 +502,7 @@ int wifi_manager_start(void)
 		}
 	}
 
-	if (IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ENABLE)) {
+	if (sta_cfg.enabled) {
 		disconnect_sta();
 		k_sleep(K_MSEC(500));
 

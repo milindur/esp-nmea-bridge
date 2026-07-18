@@ -11,6 +11,9 @@ config ESP_NMEA_BRIDGE_AP_ENABLE
 config ESP_NMEA_BRIDGE_STA_ENABLE
 	bool "Enable Wi-Fi station mode"
 	default y
+	help
+	  Runtime default only: station support is always built in, and a
+	  stored bridge-configuration override takes precedence at boot.
 
 config ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE
 	bool "Enable TCP NMEA server"
@@ -27,9 +30,11 @@ config ESP_NMEA_BRIDGE_WEB_APP_ENABLE
 	depends on NETWORKING
 	depends on NET_TCP
 	depends on NET_SOCKETS
+	select REBOOT
 	help
 	  Serve a small HTTP web app and JSON status endpoint on port 80.
 	  The browser polls /api/status to display bridge telemetry counters.
+	  Includes the configuration API with its explicit reboot endpoint.
 
 config ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE
 	bool "Enable WebApp firmware OTA updates"
@@ -137,19 +142,23 @@ config ESP_NMEA_BRIDGE_AP_PSK
 config ESP_NMEA_BRIDGE_STA_SSID
 	string "STA target AP SSID"
 	default ""
+	help
+	  Runtime default; a stored bridge-configuration override wins.
 
 config ESP_NMEA_BRIDGE_STA_PSK
 	string "STA target AP password"
 	default ""
+	help
+	  Runtime default; a stored bridge-configuration override wins.
 
 config ESP_NMEA_BRIDGE_STA_ROTATE_MAC
 	bool "Rotate STA MAC address on boot"
 	default y
-	depends on ESP_NMEA_BRIDGE_STA_ENABLE
 	help
 	  Use a random locally administered STA MAC address on each boot. This
 	  avoids stale station state on APs that keep the previous association
 	  after the ESP resets without sending a deauthentication frame.
+	  Runtime default; a stored bridge-configuration override wins.
 
 config ESP_NMEA_BRIDGE_TCP_NMEA_PORT
 	int "TCP NMEA port"

@@ -16,6 +16,10 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/sys/util.h>
 
+#ifndef CONFIG_ZTEST
+#include <zephyr/sys/reboot.h>
+#endif
+
 #if __has_include(<app_version.h>)
 #include <app_version.h>
 #endif
@@ -25,6 +29,8 @@
 #endif
 
 #ifdef CONFIG_ZTEST
+void web_app_test_request_reboot(void);
+#define web_request_reboot web_app_test_request_reboot
 ssize_t web_app_test_zsock_recv(int sock, void *buf, size_t max_len, int flags);
 ssize_t web_app_test_zsock_send(int sock, const void *buf, size_t len, int flags);
 int web_app_test_zsock_socket(int family, int type, int proto);
@@ -60,7 +66,9 @@ LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 #define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
 #define WEB_APP_RECV_TIMEOUT_MS 5000
 #define WEB_APP_CONFIG_PATH "/api/config"
-#define WEB_APP_CONFIG_BODY_MAX 256
+#define WEB_APP_REBOOT_PATH "/api/reboot"
+#define WEB_APP_CONFIG_BODY_MAX 384
+#define WEB_APP_REBOOT_DELAY_MS 750
 
 extern const char web_asset_index_html_start[];
 extern const char web_asset_index_html_end[];
@@ -337,28 +345,59 @@ static int write_status_json(int fd)
 	return ret;
 }
 
+/*
+ * The string buffers hold the escaped JSON form, so they exceed the
+ * configuration limits on purpose: over-long input still decodes and is then
+ * rejected with a per-field error instead of an opaque JSON error.
+ */
 struct config_payload {
 	bool ais_filter_enabled;
 	int32_t ais_own_mmsi;
+	bool sta_enabled;
+	char sta_ssid[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 2U];
+	char sta_psk[BRIDGE_CONFIG_WIFI_PSK_MAX * 2U + 2U];
+	bool sta_rotate_mac;
 };
 
 static const struct json_obj_descr config_payload_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct config_payload, ais_filter_enabled, JSON_TOK_TRUE),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, ais_own_mmsi, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_enabled, JSON_TOK_TRUE),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_ssid, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_psk, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_rotate_mac, JSON_TOK_TRUE),
 };
 
 #define CONFIG_FIELD_AIS_FILTER_ENABLED BIT(0)
 #define CONFIG_FIELD_AIS_OWN_MMSI BIT(1)
+#define CONFIG_FIELD_STA_ENABLED BIT(2)
+#define CONFIG_FIELD_STA_SSID BIT(3)
+#define CONFIG_FIELD_STA_PSK BIT(4)
+#define CONFIG_FIELD_STA_ROTATE_MAC BIT(5)
+#define CONFIG_FIELDS_AIS (CONFIG_FIELD_AIS_FILTER_ENABLED | CONFIG_FIELD_AIS_OWN_MMSI)
+#define CONFIG_FIELDS_STA (CONFIG_FIELD_STA_ENABLED | CONFIG_FIELD_STA_SSID | \
+			   CONFIG_FIELD_STA_PSK | CONFIG_FIELD_STA_ROTATE_MAC)
 
 static int write_config_json(int fd, const char *status)
 {
 	struct bridge_config_ais ais;
-	char body[80];
+	struct bridge_config_sta sta;
+	char ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
+	char body[320];
 
 	bridge_config_get_ais(&ais);
+	bridge_config_get_sta(&sta);
+	json_escape_string(sta.ssid, ssid_json, sizeof(ssid_json));
+	/* PSKs are write-only through the API; only expose whether one is stored. */
 	(void)snprintk(body, sizeof(body),
-		       "{\"ais_filter_enabled\":%s,\"ais_own_mmsi\":%u}",
-		       ais.filter_enabled ? "true" : "false", ais.own_mmsi);
+		       "{\"ais_filter_enabled\":%s,\"ais_own_mmsi\":%u,"
+		       "\"sta_enabled\":%s,\"sta_ssid\":\"%s\",\"sta_psk_set\":%s,"
+		       "\"sta_rotate_mac\":%s,\"reboot_required\":%s}",
+		       ais.filter_enabled ? "true" : "false", ais.own_mmsi,
+		       sta.enabled ? "true" : "false", ssid_json,
+		       sta.psk[0] != '\0' ? "true" : "false",
+		       sta.rotate_mac ? "true" : "false",
+		       bridge_config_reboot_required() ? "true" : "false");
 	return write_text_response(fd, status, "application/json", body);
 }
 
@@ -699,6 +738,7 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 {
 	struct config_payload payload;
 	struct bridge_config_ais ais;
+	struct bridge_config_sta sta;
 	int fields;
 
 	if (!parsed->has_content_length) {
@@ -739,22 +779,91 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 					       "must be between 0 and 999999999");
 		return;
 	}
+	if ((fields & CONFIG_FIELD_STA_SSID) != 0) {
+		size_t ssid_len = strlen(payload.sta_ssid);
 
-	bridge_config_get_ais(&ais);
-	if ((fields & CONFIG_FIELD_AIS_FILTER_ENABLED) != 0) {
-		ais.filter_enabled = payload.ais_filter_enabled;
+		if (ssid_len < 1U || ssid_len > BRIDGE_CONFIG_WIFI_SSID_MAX) {
+			(void)write_config_field_error(fd, "sta_ssid",
+						       "must be 1 to 32 bytes");
+			return;
+		}
 	}
-	if ((fields & CONFIG_FIELD_AIS_OWN_MMSI) != 0) {
-		ais.own_mmsi = (uint32_t)payload.ais_own_mmsi;
+	if ((fields & CONFIG_FIELD_STA_PSK) != 0) {
+		size_t psk_len = strlen(payload.sta_psk);
+
+		/* Blank means: keep the stored PSK. */
+		if (psk_len != 0U && (psk_len < BRIDGE_CONFIG_WIFI_PSK_MIN ||
+				      psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX)) {
+			(void)write_config_field_error(fd, "sta_psk",
+						       "must be 8 to 63 characters or blank");
+			return;
+		}
 	}
 
-	if (bridge_config_set_ais(&ais) != 0) {
-		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
-					  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
-		return;
+	if ((fields & CONFIG_FIELDS_AIS) != 0) {
+		bridge_config_get_ais(&ais);
+		if ((fields & CONFIG_FIELD_AIS_FILTER_ENABLED) != 0) {
+			ais.filter_enabled = payload.ais_filter_enabled;
+		}
+		if ((fields & CONFIG_FIELD_AIS_OWN_MMSI) != 0) {
+			ais.own_mmsi = (uint32_t)payload.ais_own_mmsi;
+		}
+		if (bridge_config_set_ais(&ais) != 0) {
+			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+						  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
+			return;
+		}
+	}
+
+	if ((fields & CONFIG_FIELDS_STA) != 0) {
+		bridge_config_get_sta(&sta);
+		if ((fields & CONFIG_FIELD_STA_ENABLED) != 0) {
+			sta.enabled = payload.sta_enabled;
+		}
+		if ((fields & CONFIG_FIELD_STA_ROTATE_MAC) != 0) {
+			sta.rotate_mac = payload.sta_rotate_mac;
+		}
+		if ((fields & CONFIG_FIELD_STA_SSID) != 0) {
+			strcpy(sta.ssid, payload.sta_ssid);
+		}
+		if ((fields & CONFIG_FIELD_STA_PSK) != 0 && payload.sta_psk[0] != '\0') {
+			strcpy(sta.psk, payload.sta_psk);
+		}
+		if (bridge_config_set_sta(&sta) != 0) {
+			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+						  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
+			return;
+		}
 	}
 
 	(void)write_config_json(fd, "200 OK");
+}
+
+#ifndef CONFIG_ZTEST
+static void reboot_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+static K_WORK_DELAYABLE_DEFINE(web_reboot_work, reboot_work_handler);
+
+/* Delayed so the HTTP response reaches the client before the link drops. */
+static void web_request_reboot(void)
+{
+	LOG_INF("Reboot requested via web API");
+	(void)k_work_schedule(&web_reboot_work, K_MSEC(WEB_APP_REBOOT_DELAY_MS));
+}
+#endif
+
+static void handle_reboot(int fd)
+{
+	int ret = write_text_response(fd, "200 OK", "application/json", "{\"ok\":true}\n");
+
+	web_request_reboot();
+	if (ret != 0) {
+		LOG_WRN("Reboot response failed: %d", ret);
+	}
 }
 
 static void handle_client(int fd)
@@ -801,6 +910,11 @@ static void handle_client(int fd)
 
 		if (token_equals(parsed.path, parsed.path_len, WEB_APP_CONFIG_PATH)) {
 			handle_config_update(fd, request, sizeof(request), &parsed);
+			return;
+		}
+
+		if (token_equals(parsed.path, parsed.path_len, WEB_APP_REBOOT_PATH)) {
+			handle_reboot(fd);
 			return;
 		}
 	} else {

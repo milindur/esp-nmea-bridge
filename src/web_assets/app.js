@@ -105,35 +105,62 @@ function wireTabs() {
 
 let configLoaded = false;
 let configSaving = false;
+let rebootInProgress = false;
+let configRebootExpectedUntil = 0;
+let staPskStored = false;
 
-function setConfigMessage(text, severity) {
-  const el = $('ais-config-message');
+function setConfigMessage(text, severity) { setFormMessage('ais-config-message', text, severity); }
+function setStaMessage(text, severity) { setFormMessage('sta-config-message', text, severity); }
+
+function setFormMessage(id, text, severity) {
+  const el = $(id);
   if (!el) return;
   el.textContent = text;
   el.classList.remove('is-ok', 'is-warn', 'is-bad');
   if (severity) el.classList.add(`is-${severity}`);
 }
 
-function setConfigFieldError(text) {
-  const el = $('ais-mmsi-error');
+function setFieldError(id, text) {
+  const el = $(id);
   if (!el) return;
   el.textContent = text || '';
   el.hidden = !text;
 }
 
+function setConfigFieldError(text) { setFieldError('ais-mmsi-error', text); }
+
 function updateConfigControls() {
-  const disabled = !configLoaded || configSaving;
-  for (const id of ['ais-enabled', 'ais-mmsi']) {
+  const disabled = !configLoaded || configSaving || rebootInProgress;
+  for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-psk', 'sta-rotate-mac']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
-  const save = $('ais-save');
-  if (save) save.disabled = disabled;
+  for (const id of ['ais-save', 'sta-save']) {
+    const el = $(id);
+    if (el) el.disabled = disabled;
+  }
+  const reboot = $('reboot-button');
+  if (reboot) reboot.disabled = rebootInProgress;
+}
+
+function renderRebootRequired(required) {
+  const banner = $('reboot-banner');
+  if (banner) banner.hidden = !required;
+  const badge = $('sta-reboot-badge');
+  if (badge) badge.hidden = !required;
 }
 
 function renderConfig(cfg) {
   $('ais-enabled').checked = Boolean(cfg.ais_filter_enabled);
   $('ais-mmsi').value = String(cfg.ais_own_mmsi ?? 0);
+  $('sta-enabled').checked = Boolean(cfg.sta_enabled);
+  $('sta-ssid').value = String(cfg.sta_ssid ?? '');
+  $('sta-rotate-mac').checked = Boolean(cfg.sta_rotate_mac);
+  staPskStored = Boolean(cfg.sta_psk_set);
+  const psk = $('sta-psk');
+  psk.value = '';
+  psk.placeholder = staPskStored ? 'Leave blank to keep the stored password' : 'No password stored (open network)';
+  renderRebootRequired(Boolean(cfg.reboot_required));
 }
 
 async function loadConfig() {
@@ -143,12 +170,33 @@ async function loadConfig() {
     renderConfig(await r.json());
     configLoaded = true;
     setConfigFieldError('');
+    setFieldError('sta-ssid-error', '');
+    setFieldError('sta-psk-error', '');
     setConfigMessage('Changes apply immediately after saving.');
+    setStaMessage('Changes take effect after the next reboot.');
   } catch (error) {
     setConfigMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
+    setStaMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setTimeout(loadConfig, 5000);
   }
   updateConfigControls();
+}
+
+async function postConfig(body, onFieldErrors) {
+  const r = await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await r.json().catch(() => null);
+  if (!r.ok) {
+    const errors = payload && payload.errors ? payload.errors : {};
+    onFieldErrors(errors);
+    const first = Object.values(errors)[0];
+    throw new Error(first || `HTTP ${r.status}`);
+  }
+  renderConfig(payload || {});
+  return payload || {};
 }
 
 async function handleConfigSubmit(event) {
@@ -167,21 +215,12 @@ async function handleConfigSubmit(event) {
   setConfigMessage('Saving…', 'warn');
 
   try {
-    const r = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ais_filter_enabled: $('ais-enabled').checked,
-        ais_own_mmsi: Number(mmsiText),
-      }),
-    });
-    const payload = await r.json().catch(() => null);
-    if (!r.ok) {
-      const errors = payload && payload.errors ? payload.errors : {};
+    await postConfig({
+      ais_filter_enabled: $('ais-enabled').checked,
+      ais_own_mmsi: Number(mmsiText),
+    }, (errors) => {
       if (errors.ais_own_mmsi) setConfigFieldError(`Own MMSI ${errors.ais_own_mmsi}.`);
-      throw new Error(errors.body || errors.ais_own_mmsi || `HTTP ${r.status}`);
-    }
-    renderConfig(payload || {});
+    });
     setConfigMessage('Saved. The filter now uses the new settings.', 'ok');
   } catch (error) {
     setConfigMessage(`Saving failed: ${error.message}.`, 'bad');
@@ -190,9 +229,79 @@ async function handleConfigSubmit(event) {
   updateConfigControls();
 }
 
+function staSsidError(ssidBytes) {
+  return ssidBytes < 1 || ssidBytes > 32 ? 'Enter an SSID of 1 to 32 bytes.' : '';
+}
+
+function staPskError(pskLength) {
+  return pskLength !== 0 && (pskLength < 8 || pskLength > 63)
+    ? 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.' : '';
+}
+
+async function handleStaSubmit(event) {
+  event.preventDefault();
+  const ssid = $('sta-ssid').value;
+  const psk = $('sta-psk').value;
+  const ssidError = staSsidError(new TextEncoder().encode(ssid).length);
+  const pskError = staPskError(psk.length);
+
+  setFieldError('sta-ssid-error', ssidError);
+  setFieldError('sta-psk-error', pskError);
+  if (ssidError || pskError) {
+    setStaMessage('Not saved.', 'bad');
+    return;
+  }
+
+  configSaving = true;
+  updateConfigControls();
+  setStaMessage('Saving…', 'warn');
+
+  const body = {
+    sta_enabled: $('sta-enabled').checked,
+    sta_ssid: ssid,
+    sta_rotate_mac: $('sta-rotate-mac').checked,
+  };
+  if (psk !== '') body.sta_psk = psk;
+
+  try {
+    const payload = await postConfig(body, (errors) => {
+      if (errors.sta_ssid) setFieldError('sta-ssid-error', `SSID ${errors.sta_ssid}.`);
+      if (errors.sta_psk) setFieldError('sta-psk-error', `Password ${errors.sta_psk}.`);
+    });
+    setStaMessage(payload.reboot_required
+      ? 'Saved. Reboot the bridge to apply the new Wi-Fi settings.'
+      : 'Saved.', 'ok');
+  } catch (error) {
+    setStaMessage(`Saving failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
+async function handleReboot() {
+  rebootInProgress = true;
+  updateConfigControls();
+  setStaMessage('Rebooting…', 'warn');
+
+  try {
+    const r = await fetch('/api/reboot', { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    configRebootExpectedUntil = Date.now() + 60000;
+    setStaMessage('Rebooting. This page reconnects automatically.', 'warn');
+  } catch (error) {
+    rebootInProgress = false;
+    setStaMessage(`Reboot request failed: ${error.message}.`, 'bad');
+  }
+  updateConfigControls();
+}
+
 function wireConfigUi() {
   const form = $('ais-config-form');
   if (form) form.addEventListener('submit', handleConfigSubmit);
+  const staForm = $('sta-config-form');
+  if (staForm) staForm.addEventListener('submit', handleStaSubmit);
+  const reboot = $('reboot-button');
+  if (reboot) reboot.addEventListener('click', handleReboot);
   updateConfigControls();
 }
 
@@ -239,6 +348,8 @@ function rowItem(label, value, severity) {
 
 function setOffline(error) {
   const expectedOtaReboot = Date.now() < otaRebootExpectedUntil;
+  const expectedConfigReboot = Date.now() < configRebootExpectedUntil;
+  const expectedReboot = expectedOtaReboot || expectedConfigReboot;
   statusOffline = true;
 
   for (const id of ['connection-state', 'input-state', 'wifi-state']) {
@@ -246,7 +357,7 @@ function setOffline(error) {
     if (!el) continue;
     el.classList.remove('state-ok', 'state-warn');
     el.classList.add('state-bad');
-    el.querySelector('b').textContent = expectedOtaReboot ? 'REBOOTING' : 'OFFLINE';
+    el.querySelector('b').textContent = expectedReboot ? 'REBOOTING' : 'OFFLINE';
   }
 
   setText('fw-version', '—');
@@ -256,29 +367,44 @@ function setOffline(error) {
 
   const notice = $('offline-notice');
   if (notice) notice.hidden = false;
-  setText('offline-title', expectedOtaReboot ? 'Rebooting for firmware update' : 'Bridge unreachable');
+  setText('offline-title', expectedOtaReboot ? 'Rebooting for firmware update'
+    : (expectedConfigReboot ? 'Rebooting' : 'Bridge unreachable'));
   setText('offline-reason', expectedOtaReboot
     ? 'OTA upload complete. The bridge is rebooting into the test image; this page reconnects automatically.'
-    : (error instanceof Error && error.message
-      ? `No response from the bridge (${error.message}). Retrying every 2 s.`
-      : 'No response from the bridge. Retrying every 2 s.'));
-  setText('updated', expectedOtaReboot ? 'Rebooting · retrying every 2 s' : 'Offline · retrying every 2 s');
+    : (expectedConfigReboot
+      ? 'The bridge is restarting to apply configuration changes; this page reconnects automatically.'
+      : (error instanceof Error && error.message
+        ? `No response from the bridge (${error.message}). Retrying every 2 s.`
+        : 'No response from the bridge. Retrying every 2 s.')));
+  setText('updated', expectedReboot ? 'Rebooting · retrying every 2 s' : 'Offline · retrying every 2 s');
 
   $('details').innerHTML = expectedOtaReboot
     ? rowItem('Status updates', 'paused during reboot', 'warn') +
       rowItem('Next retry', 'in 2 s') +
       rowItem('Expected result', 'test image comes online and self-confirms', 'ok')
-    : rowItem('Status updates', 'unreachable', 'bad') +
-      rowItem('Counters', 'unavailable', 'warn') +
-      rowItem('Next retry', 'in 2 s');
+    : (expectedConfigReboot
+      ? rowItem('Status updates', 'paused during reboot', 'warn') +
+        rowItem('Next retry', 'in 2 s') +
+        rowItem('Expected result', 'bridge comes back with the saved configuration', 'ok')
+      : rowItem('Status updates', 'unreachable', 'bad') +
+        rowItem('Counters', 'unavailable', 'warn') +
+        rowItem('Next retry', 'in 2 s'));
 
   updateOtaControls();
 }
 
 function clearOffline() {
+  const wasOffline = statusOffline;
   statusOffline = false;
   const notice = $('offline-notice');
   if (notice) notice.hidden = true;
+  if (wasOffline) {
+    // Back after a reboot or outage: re-fetch config so the
+    // reboot-required banner reflects the device's fresh state.
+    configRebootExpectedUntil = 0;
+    rebootInProgress = false;
+    loadConfig();
+  }
 }
 
 function renderOta(ota) {

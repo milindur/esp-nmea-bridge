@@ -17,7 +17,7 @@ void bridge_config_test_reset(void);
 
 struct saved_entry {
 	char name[40];
-	uint8_t value[8];
+	uint8_t value[128];
 	size_t len;
 };
 
@@ -239,6 +239,193 @@ ZTEST(bridge_config, test_save_failure_keeps_previous_config)
 	bridge_config_get_ais(&ais);
 	zassert_true(ais.filter_enabled);
 	zassert_equal(ais.own_mmsi, TEST_DEFAULT_MMSI);
+}
+
+/* Mirrors the packed layout in bridge_config.c: flags, ssid_len, ssid, psk_len, psk. */
+#define STA_RECORD_LEN 99U
+
+static void make_sta_record(bool enabled, bool rotate_mac, const char *ssid, const char *psk,
+			    uint8_t record[STA_RECORD_LEN])
+{
+	memset(record, 0, STA_RECORD_LEN);
+	record[0] = enabled ? 1U : 0U;
+	record[1] = rotate_mac ? 1U : 0U;
+	record[2] = (uint8_t)strlen(ssid);
+	memcpy(&record[3], ssid, strlen(ssid));
+	record[35] = (uint8_t)strlen(psk);
+	memcpy(&record[36], psk, strlen(psk));
+}
+
+static int store_sta_record(bool enabled, bool rotate_mac, const char *ssid, const char *psk)
+{
+	uint8_t record[STA_RECORD_LEN];
+
+	make_sta_record(enabled, rotate_mac, ssid, psk, record);
+	return bridge_config_test_settings_set("sta", sizeof(record), stored_read_cb, record);
+}
+
+static void fill_sta(struct bridge_config_sta *sta, bool enabled, bool rotate_mac,
+		     const char *ssid, const char *psk)
+{
+	memset(sta, 0, sizeof(*sta));
+	sta->enabled = enabled;
+	sta->rotate_mac = rotate_mac;
+	strcpy(sta->ssid, ssid);
+	strcpy(sta->psk, psk);
+}
+
+ZTEST(bridge_config, test_sta_defaults_come_from_kconfig)
+{
+	struct bridge_config_sta sta;
+
+	bridge_config_get_sta(&sta);
+
+	zassert_true(sta.enabled);
+	zassert_true(sta.rotate_mac);
+	zassert_str_equal(sta.ssid, "BoatNet");
+	zassert_str_equal(sta.psk, "anchor123");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_stored_sta_overrides_defaults_without_reboot_flag)
+{
+	struct bridge_config_sta sta;
+
+	zassert_equal(store_sta_record(false, false, "Marina", "harbour99"), 0);
+
+	bridge_config_get_sta(&sta);
+	zassert_false(sta.enabled);
+	zassert_false(sta.rotate_mac);
+	zassert_str_equal(sta.ssid, "Marina");
+	zassert_str_equal(sta.psk, "harbour99");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_malformed_stored_sta_keeps_defaults)
+{
+	struct bridge_config_sta sta;
+	uint8_t record[STA_RECORD_LEN];
+	uint8_t short_value = 1U;
+
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(short_value),
+						      stored_read_cb, &short_value), 0);
+
+	make_sta_record(true, true, "Marina", "harbour99", record);
+	record[2] = 33U; /* ssid_len out of range */
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sta_record(true, true, "Marina", "harbour99", record);
+	record[35] = 64U; /* psk_len out of range */
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sta_record(true, true, "Marina", "harbour99", record);
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
+						      failing_read_cb, record), 0);
+
+	bridge_config_get_sta(&sta);
+	zassert_str_equal(sta.ssid, "BoatNet");
+	zassert_str_equal(sta.psk, "anchor123");
+}
+
+ZTEST(bridge_config, test_set_sta_persists_record_and_flags_reboot)
+{
+	struct bridge_config_sta next;
+	struct bridge_config_sta sta;
+	uint8_t expected[STA_RECORD_LEN];
+
+	fill_sta(&next, false, false, "Marina", "harbour99");
+	zassert_equal(bridge_config_set_sta(&next), 0);
+
+	make_sta_record(false, false, "Marina", "harbour99", expected);
+	zassert_equal(save_count, 1);
+	zassert_str_equal(saved[0].name, "bridge/sta");
+	zassert_equal(saved[0].len, sizeof(expected));
+	zassert_mem_equal(saved[0].value, expected, sizeof(expected));
+
+	bridge_config_get_sta(&sta);
+	zassert_false(sta.enabled);
+	zassert_str_equal(sta.ssid, "Marina");
+	zassert_str_equal(sta.psk, "harbour99");
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_sta_accepts_empty_ssid_and_psk)
+{
+	struct bridge_config_sta next;
+
+	fill_sta(&next, false, true, "", "");
+	zassert_equal(bridge_config_set_sta(&next), 0);
+	zassert_equal(save_count, 1);
+}
+
+ZTEST(bridge_config, test_set_sta_rejects_invalid_fields_without_saving)
+{
+	struct bridge_config_sta next;
+	struct bridge_config_sta sta;
+
+	/* SSID filling the whole array without terminator = longer than 32 bytes */
+	fill_sta(&next, true, true, "", "harbour99");
+	memset(next.ssid, 'a', sizeof(next.ssid));
+	zassert_equal(bridge_config_set_sta(&next), -EINVAL);
+
+	/* PSK shorter than 8 characters */
+	fill_sta(&next, true, true, "Marina", "short");
+	zassert_equal(bridge_config_set_sta(&next), -EINVAL);
+
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_sta(&sta);
+	zassert_str_equal(sta.ssid, "BoatNet");
+}
+
+ZTEST(bridge_config, test_set_sta_unchanged_is_a_no_op)
+{
+	struct bridge_config_sta next;
+
+	fill_sta(&next, true, true, "BoatNet", "anchor123");
+	zassert_equal(bridge_config_set_sta(&next), 0);
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_sta_save_failure_keeps_previous_config)
+{
+	struct bridge_config_sta next;
+	struct bridge_config_sta sta;
+
+	save_ret = -EIO;
+	fill_sta(&next, false, false, "Marina", "harbour99");
+
+	zassert_equal(bridge_config_set_sta(&next), -EIO);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_sta(&sta);
+	zassert_true(sta.enabled);
+	zassert_str_equal(sta.ssid, "BoatNet");
+}
+
+ZTEST(bridge_config, test_set_sta_does_not_notify_live_listener)
+{
+	struct bridge_config_sta next;
+
+	bridge_config_set_listener(count_listener);
+	fill_sta(&next, false, false, "Marina", "harbour99");
+	zassert_equal(bridge_config_set_sta(&next), 0);
+	zassert_equal(listener_count, 0);
+}
+
+ZTEST(bridge_config, test_ais_change_does_not_require_reboot)
+{
+	struct bridge_config_ais next = {
+		.filter_enabled = false,
+		.own_mmsi = 211000000U,
+	};
+
+	zassert_equal(bridge_config_set_ais(&next), 0);
+	zassert_false(bridge_config_reboot_required());
 }
 
 ZTEST_SUITE(bridge_config, NULL, NULL, reset_harness, NULL, NULL);

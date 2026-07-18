@@ -11,13 +11,29 @@ function controlsDisabled({ statusOffline, otaAvailable, otaUploadAllowed, otaUp
   return Boolean(statusOffline) || !otaAvailable || !otaUploadAllowed || otaUploadInProgress || now < otaRebootExpectedUntil;
 }
 
-function offlineReason({ now, otaRebootExpectedUntil, error }) {
+function offlineReason({ now, otaRebootExpectedUntil, configRebootExpectedUntil = 0, error }) {
   const expectedOtaReboot = now < otaRebootExpectedUntil;
+  const expectedConfigReboot = now < configRebootExpectedUntil;
   return expectedOtaReboot
     ? 'OTA upload complete. The bridge is rebooting into the test image; this page reconnects automatically.'
-    : (error instanceof Error && error.message
-      ? `No response from the bridge (${error.message}). Retrying every 2 s.`
-      : 'No response from the bridge. Retrying every 2 s.');
+    : (expectedConfigReboot
+      ? 'The bridge is restarting to apply configuration changes; this page reconnects automatically.'
+      : (error instanceof Error && error.message
+        ? `No response from the bridge (${error.message}). Retrying every 2 s.`
+        : 'No response from the bridge. Retrying every 2 s.'));
+}
+
+function staSsidError(ssidBytes) {
+  return ssidBytes < 1 || ssidBytes > 32 ? 'Enter an SSID of 1 to 32 bytes.' : '';
+}
+
+function staPskError(pskLength) {
+  return pskLength !== 0 && (pskLength < 8 || pskLength > 63)
+    ? 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.' : '';
+}
+
+function staPskPlaceholder(staPskStored) {
+  return staPskStored ? 'Leave blank to keep the stored password' : 'No password stored (open network)';
 }
 
 function resolveTheme(stored, osPrefersDark) {
@@ -63,6 +79,19 @@ assert.match(offlineReason({ now, otaRebootExpectedUntil: now + 120_000 }), /reb
 assert.match(offlineReason({ now, otaRebootExpectedUntil: 0, error: new Error('HTTP 500') }), /HTTP 500/);
 assert.doesNotMatch(offlineReason({ now, otaRebootExpectedUntil: 0 }), /\/api\//);
 assert.doesNotMatch(offlineReason({ now, otaRebootExpectedUntil: now + 120_000 }), /\/api\//);
+assert.match(offlineReason({ now, otaRebootExpectedUntil: 0, configRebootExpectedUntil: now + 60_000 }), /apply configuration changes/);
+assert.match(offlineReason({ now, otaRebootExpectedUntil: now + 120_000, configRebootExpectedUntil: now + 60_000 }), /test image/);
+assert.equal(staSsidError(0), 'Enter an SSID of 1 to 32 bytes.');
+assert.equal(staSsidError(1), '');
+assert.equal(staSsidError(32), '');
+assert.equal(staSsidError(33), 'Enter an SSID of 1 to 32 bytes.');
+assert.equal(staPskError(0), '');
+assert.equal(staPskError(7), 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.');
+assert.equal(staPskError(8), '');
+assert.equal(staPskError(63), '');
+assert.equal(staPskError(64), 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.');
+assert.match(staPskPlaceholder(true), /keep the stored password/);
+assert.match(staPskPlaceholder(false), /open network/);
 assert.equal(resolveTheme(null, true), 'dark');
 assert.equal(resolveTheme(null, false), 'light');
 assert.equal(resolveTheme('light', true), 'light');

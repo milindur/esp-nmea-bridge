@@ -256,6 +256,41 @@ body {
   color: var(--text-soft);
 }
 
+/* Reboot-required banner */
+
+.alert-reboot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: rgba(178, 125, 44, .08);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  border: 1px solid rgba(178, 125, 44, .35);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  border-radius: 8px;
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.alert-reboot[hidden] { display: none; }
+
+.alert-reboot-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.alert-reboot strong {
+  font: 600 .93rem/1.4 var(--sans);
+  color: var(--warn);
+}
+
+.alert-reboot span {
+  font: 400 .86rem/1.45 var(--sans);
+  color: var(--text-soft);
+}
+
 /* Connection panels */
 
 .conn-grid {
