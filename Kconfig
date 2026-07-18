@@ -143,6 +143,8 @@ config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT
 config ESP_NMEA_BRIDGE_AP_SSID
 	string "SoftAP SSID"
 	default "ESP-NMEA0183"
+	help
+	  Runtime default; a stored bridge-configuration override wins.
 
 config ESP_NMEA_BRIDGE_AP_PSK
 	string "SoftAP WPA2 PSK password"
@@ -150,6 +152,7 @@ config ESP_NMEA_BRIDGE_AP_PSK
 	help
 	  Prototype default only. Override in a local/pristine overlay for real use.
 	  Leave empty to start an open SoftAP.
+	  Runtime default; a stored bridge-configuration override wins.
 
 config ESP_NMEA_BRIDGE_STA_SSID
 	string "STA target AP SSID"

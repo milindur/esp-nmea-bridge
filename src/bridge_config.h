@@ -10,6 +10,7 @@
 #define BRIDGE_CONFIG_WIFI_PSK_MIN 8
 #define BRIDGE_CONFIG_WIFI_PSK_MAX 63
 #define BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX 15
+#define BRIDGE_CONFIG_HOSTNAME_MAX 32
 
 struct bridge_config_ais {
 	bool filter_enabled;
@@ -21,6 +22,16 @@ struct bridge_config_sta {
 	bool rotate_mac;
 	char ssid[BRIDGE_CONFIG_WIFI_SSID_MAX + 1];
 	char psk[BRIDGE_CONFIG_WIFI_PSK_MAX + 1];
+};
+
+struct bridge_config_ap {
+	char ssid[BRIDGE_CONFIG_WIFI_SSID_MAX + 1];
+	/* Empty means: open access point. */
+	char psk[BRIDGE_CONFIG_WIFI_PSK_MAX + 1];
+};
+
+struct bridge_config_system {
+	char hostname[BRIDGE_CONFIG_HOSTNAME_MAX + 1];
 };
 
 struct bridge_config_tcp_client {
@@ -74,6 +85,31 @@ static inline bool bridge_config_tcp_client_host_valid(const char *host)
 	return octets == 4;
 }
 
+/*
+ * True for a DNS label usable as device hostname: 1..32 characters from
+ * [a-z0-9-], neither starting nor ending with a hyphen.
+ */
+static inline bool bridge_config_hostname_valid(const char *hostname)
+{
+	size_t len = 0;
+
+	if (hostname == NULL || hostname[0] == '\0' || hostname[0] == '-') {
+		return false;
+	}
+
+	for (; hostname[len] != '\0'; len++) {
+		char ch = hostname[len];
+
+		if (len == BRIDGE_CONFIG_HOSTNAME_MAX) {
+			return false;
+		}
+		if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-')) {
+			return false;
+		}
+	}
+	return hostname[len - 1] != '-';
+}
+
 /* Loads persistent overrides; without them the Kconfig defaults stay effective. */
 int bridge_config_init(void);
 
@@ -103,6 +139,25 @@ void bridge_config_get_sta(struct bridge_config_sta *out);
  * reboot-scope: no listener notification, values are consumed at next boot.
  */
 int bridge_config_set_sta(const struct bridge_config_sta *sta);
+
+void bridge_config_get_ap(struct bridge_config_ap *out);
+
+/*
+ * Validates (SSID 1..32 bytes, PSK empty = open AP or 8..63 chars), persists,
+ * and marks a reboot as required when the effective configuration changed.
+ * AP is reboot-scope: no listener notification, values are consumed at next
+ * boot. AP enable stays Kconfig-only (rescue anchor, ADR 0002).
+ */
+int bridge_config_set_ap(const struct bridge_config_ap *ap);
+
+void bridge_config_get_system(struct bridge_config_system *out);
+
+/*
+ * Validates (hostname a DNS label per bridge_config_hostname_valid()),
+ * persists, and marks a reboot as required when the effective configuration
+ * changed. Hostname is reboot-scope: applied once at boot.
+ */
+int bridge_config_set_system(const struct bridge_config_system *system);
 
 /* True once a reboot-scope value changed since boot. */
 bool bridge_config_reboot_required(void);

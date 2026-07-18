@@ -7,8 +7,11 @@
 #include "web_app.h"
 #include "wifi_manager.h"
 
+#include <string.h>
+
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/net/hostname.h>
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -38,6 +41,27 @@ static void stats_thread(void *a, void *b, void *c)
 K_THREAD_DEFINE(stats_tid, 2048, stats_thread, NULL, NULL, NULL,
 	       10, 0, 0);
 
+/*
+ * Hostname is reboot-scope: applied once before the network comes up. mDNS
+ * and the DHCP client read the hostname per request, so setting it here is
+ * sufficient for <hostname>.local and the router's client list.
+ */
+static void apply_hostname(void)
+{
+	struct bridge_config_system system;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_NET_HOSTNAME_DYNAMIC)) {
+		return;
+	}
+
+	bridge_config_get_system(&system);
+	ret = net_hostname_set(system.hostname, strlen(system.hostname));
+	if (ret != 0) {
+		LOG_WRN("Setting hostname %s failed: %d", system.hostname, ret);
+	}
+}
+
 static void bridge_config_changed(void)
 {
 	struct bridge_config_ais ais;
@@ -59,6 +83,7 @@ int main(void)
 	}
 	bridge_config_set_listener(bridge_config_changed);
 	bridge_config_changed();
+	apply_hostname();
 
 	(void)status_led_start();
 

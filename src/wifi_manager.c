@@ -37,8 +37,9 @@ LOG_MODULE_REGISTER(wifi_manager, LOG_LEVEL_INF);
 
 static struct net_if *ap_iface;
 static struct net_if *sta_iface;
-/* Effective STA configuration, captured once at boot; STA is reboot-scope. */
+/* Effective STA/AP configuration, captured once at boot; both are reboot-scope. */
 static struct bridge_config_sta sta_cfg;
+static struct bridge_config_ap ap_cfg;
 static struct net_mgmt_event_callback wifi_cb;
 static struct net_mgmt_event_callback ipv4_cb;
 static bool sta_connected;
@@ -242,10 +243,10 @@ static int enable_ap(void)
 	}
 
 	memset(&ap_config, 0, sizeof(ap_config));
-	ap_config.ssid = (const uint8_t *)CONFIG_ESP_NMEA_BRIDGE_AP_SSID;
-	ap_config.ssid_length = strlen(CONFIG_ESP_NMEA_BRIDGE_AP_SSID);
-	ap_config.psk = (const uint8_t *)CONFIG_ESP_NMEA_BRIDGE_AP_PSK;
-	ap_config.psk_length = strlen(CONFIG_ESP_NMEA_BRIDGE_AP_PSK);
+	ap_config.ssid = (const uint8_t *)ap_cfg.ssid;
+	ap_config.ssid_length = strlen(ap_cfg.ssid);
+	ap_config.psk = (const uint8_t *)ap_cfg.psk;
+	ap_config.psk_length = strlen(ap_cfg.psk);
 	ap_config.channel = WIFI_CHANNEL_ANY;
 	ap_config.band = WIFI_FREQ_BAND_2_4_GHZ;
 	ap_config.security = ap_config.psk_length == 0 ? WIFI_SECURITY_TYPE_NONE : WIFI_SECURITY_TYPE_PSK;
@@ -261,7 +262,7 @@ static int enable_ap(void)
 		return ret;
 	}
 
-	LOG_INF("SoftAP enable requested: ssid=%s security=%s", CONFIG_ESP_NMEA_BRIDGE_AP_SSID,
+	LOG_INF("SoftAP enable requested: ssid=%s security=%s", ap_cfg.ssid,
 		ap_config.security == WIFI_SECURITY_TYPE_NONE ? "open" : "WPA2-PSK");
 	return 0;
 }
@@ -472,8 +473,9 @@ int wifi_manager_start(void)
 {
 	int ret = 0;
 
-	/* STA settings are reboot-scope: capture the effective values once. */
+	/* STA and AP settings are reboot-scope: capture the effective values once. */
 	bridge_config_get_sta(&sta_cfg);
+	bridge_config_get_ap(&ap_cfg);
 
 	/* Registered first so it runs last, after wifi_shutdown_handler. */
 	if (esp_register_shutdown_handler(full_system_reset_handler) != 0 ||

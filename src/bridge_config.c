@@ -27,6 +27,8 @@ LOG_MODULE_REGISTER(bridge_config, LOG_LEVEL_INF);
 #define BRIDGE_CONFIG_KEY_AIS "bridge/ais"
 #define BRIDGE_CONFIG_KEY_STA "bridge/sta"
 #define BRIDGE_CONFIG_KEY_TCP "bridge/tcp"
+#define BRIDGE_CONFIG_KEY_AP "bridge/ap"
+#define BRIDGE_CONFIG_KEY_SYS "bridge/sys"
 
 /*
  * Both AIS fields travel in one stored record so a save is atomic at the
@@ -87,6 +89,67 @@ static bool sta_record_unpack(const uint8_t record[STA_RECORD_LEN], struct bridg
 }
 
 /*
+ * Both AP fields travel in one fixed-size record for the same atomicity:
+ * [0] ssid_len, [1..32] ssid, [33] psk_len, [34..96] psk.
+ */
+#define AP_RECORD_SSID_OFF 1U
+#define AP_RECORD_PSK_LEN_OFF (AP_RECORD_SSID_OFF + BRIDGE_CONFIG_WIFI_SSID_MAX)
+#define AP_RECORD_PSK_OFF (AP_RECORD_PSK_LEN_OFF + 1U)
+#define AP_RECORD_LEN (AP_RECORD_PSK_OFF + BRIDGE_CONFIG_WIFI_PSK_MAX)
+
+static void ap_record_pack(const struct bridge_config_ap *src, uint8_t record[AP_RECORD_LEN])
+{
+	memset(record, 0, AP_RECORD_LEN);
+	record[0] = (uint8_t)strlen(src->ssid);
+	memcpy(&record[AP_RECORD_SSID_OFF], src->ssid, record[0]);
+	record[AP_RECORD_PSK_LEN_OFF] = (uint8_t)strlen(src->psk);
+	memcpy(&record[AP_RECORD_PSK_OFF], src->psk, record[AP_RECORD_PSK_LEN_OFF]);
+}
+
+static bool ap_record_unpack(const uint8_t record[AP_RECORD_LEN], struct bridge_config_ap *dst)
+{
+	uint8_t ssid_len = record[0];
+	uint8_t psk_len = record[AP_RECORD_PSK_LEN_OFF];
+
+	if (ssid_len == 0U || ssid_len > BRIDGE_CONFIG_WIFI_SSID_MAX ||
+	    (psk_len != 0U && (psk_len < BRIDGE_CONFIG_WIFI_PSK_MIN ||
+			       psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX))) {
+		return false;
+	}
+
+	memset(dst, 0, sizeof(*dst));
+	memcpy(dst->ssid, &record[AP_RECORD_SSID_OFF], ssid_len);
+	memcpy(dst->psk, &record[AP_RECORD_PSK_OFF], psk_len);
+	return true;
+}
+
+/* The hostname travels as [0] hostname_len, [1..32] hostname. */
+#define SYS_RECORD_HOSTNAME_OFF 1U
+#define SYS_RECORD_LEN (SYS_RECORD_HOSTNAME_OFF + BRIDGE_CONFIG_HOSTNAME_MAX)
+
+static void sys_record_pack(const struct bridge_config_system *src,
+			    uint8_t record[SYS_RECORD_LEN])
+{
+	memset(record, 0, SYS_RECORD_LEN);
+	record[0] = (uint8_t)strlen(src->hostname);
+	memcpy(&record[SYS_RECORD_HOSTNAME_OFF], src->hostname, record[0]);
+}
+
+static bool sys_record_unpack(const uint8_t record[SYS_RECORD_LEN],
+			      struct bridge_config_system *dst)
+{
+	uint8_t hostname_len = record[0];
+
+	if (hostname_len > BRIDGE_CONFIG_HOSTNAME_MAX) {
+		return false;
+	}
+
+	memset(dst, 0, sizeof(*dst));
+	memcpy(dst->hostname, &record[SYS_RECORD_HOSTNAME_OFF], hostname_len);
+	return bridge_config_hostname_valid(dst->hostname);
+}
+
+/*
  * All TCP client fields travel in one fixed-size record for the same
  * atomicity: [0] enabled, [1] host_len, [2..16] host, [17..18] port in
  * native byte order.
@@ -131,6 +194,13 @@ static struct bridge_config_sta sta = {
 	.ssid = CONFIG_ESP_NMEA_BRIDGE_STA_SSID,
 	.psk = CONFIG_ESP_NMEA_BRIDGE_STA_PSK,
 };
+static struct bridge_config_ap ap = {
+	.ssid = CONFIG_ESP_NMEA_BRIDGE_AP_SSID,
+	.psk = CONFIG_ESP_NMEA_BRIDGE_AP_PSK,
+};
+static struct bridge_config_system system_cfg = {
+	.hostname = CONFIG_NET_HOSTNAME,
+};
 static struct bridge_config_tcp_client tcp_client = {
 	.enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE),
 	.host = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST,
@@ -173,6 +243,36 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		}
 		k_mutex_lock(&config_lock, K_FOREVER);
 		tcp_client = stored;
+		k_mutex_unlock(&config_lock);
+		return 0;
+	}
+
+	if (strcmp(name, "ap") == 0) {
+		uint8_t record[AP_RECORD_LEN];
+		struct bridge_config_ap stored;
+
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		    !ap_record_unpack(record, &stored)) {
+			LOG_WRN("Ignoring malformed stored %s", name);
+			return 0;
+		}
+		k_mutex_lock(&config_lock, K_FOREVER);
+		ap = stored;
+		k_mutex_unlock(&config_lock);
+		return 0;
+	}
+
+	if (strcmp(name, "sys") == 0) {
+		uint8_t record[SYS_RECORD_LEN];
+		struct bridge_config_system stored;
+
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		    !sys_record_unpack(record, &stored)) {
+			LOG_WRN("Ignoring malformed stored %s", name);
+			return 0;
+		}
+		k_mutex_lock(&config_lock, K_FOREVER);
+		system_cfg = stored;
 		k_mutex_unlock(&config_lock);
 		return 0;
 	}
@@ -329,6 +429,103 @@ int bridge_config_set_sta(const struct bridge_config_sta *next)
 	return 0;
 }
 
+void bridge_config_get_ap(struct bridge_config_ap *out)
+{
+	if (out == NULL) {
+		return;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	*out = ap;
+	k_mutex_unlock(&config_lock);
+}
+
+int bridge_config_set_ap(const struct bridge_config_ap *next)
+{
+	uint8_t record[AP_RECORD_LEN];
+	size_t ssid_len;
+	size_t psk_len;
+	bool changed;
+	int ret;
+
+	if (next == NULL || memchr(next->ssid, '\0', sizeof(next->ssid)) == NULL ||
+	    memchr(next->psk, '\0', sizeof(next->psk)) == NULL) {
+		return -EINVAL;
+	}
+	ssid_len = strlen(next->ssid);
+	psk_len = strlen(next->psk);
+	if (ssid_len == 0U ||
+	    (psk_len != 0U &&
+	     (psk_len < BRIDGE_CONFIG_WIFI_PSK_MIN || psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX))) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	changed = strcmp(ap.ssid, next->ssid) != 0 || strcmp(ap.psk, next->psk) != 0;
+	k_mutex_unlock(&config_lock);
+
+	if (!changed) {
+		return 0;
+	}
+
+	ap_record_pack(next, record);
+	ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_AP, record, sizeof(record));
+	if (ret != 0) {
+		LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_AP, ret);
+		return ret;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	ap = *next;
+	reboot_required = true;
+	k_mutex_unlock(&config_lock);
+	return 0;
+}
+
+void bridge_config_get_system(struct bridge_config_system *out)
+{
+	if (out == NULL) {
+		return;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	*out = system_cfg;
+	k_mutex_unlock(&config_lock);
+}
+
+int bridge_config_set_system(const struct bridge_config_system *next)
+{
+	uint8_t record[SYS_RECORD_LEN];
+	bool changed;
+	int ret;
+
+	if (next == NULL || memchr(next->hostname, '\0', sizeof(next->hostname)) == NULL ||
+	    !bridge_config_hostname_valid(next->hostname)) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	changed = strcmp(system_cfg.hostname, next->hostname) != 0;
+	k_mutex_unlock(&config_lock);
+
+	if (!changed) {
+		return 0;
+	}
+
+	sys_record_pack(next, record);
+	ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_SYS, record, sizeof(record));
+	if (ret != 0) {
+		LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_SYS, ret);
+		return ret;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	system_cfg = *next;
+	reboot_required = true;
+	k_mutex_unlock(&config_lock);
+	return 0;
+}
+
 bool bridge_config_reboot_required(void)
 {
 	bool required;
@@ -395,6 +592,11 @@ void bridge_config_test_reset(void)
 	sta.rotate_mac = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ROTATE_MAC);
 	strcpy(sta.ssid, CONFIG_ESP_NMEA_BRIDGE_STA_SSID);
 	strcpy(sta.psk, CONFIG_ESP_NMEA_BRIDGE_STA_PSK);
+	memset(&ap, 0, sizeof(ap));
+	strcpy(ap.ssid, CONFIG_ESP_NMEA_BRIDGE_AP_SSID);
+	strcpy(ap.psk, CONFIG_ESP_NMEA_BRIDGE_AP_PSK);
+	memset(&system_cfg, 0, sizeof(system_cfg));
+	strcpy(system_cfg.hostname, CONFIG_NET_HOSTNAME);
 	memset(&tcp_client, 0, sizeof(tcp_client));
 	tcp_client.enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE);
 	strcpy(tcp_client.host, CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST);

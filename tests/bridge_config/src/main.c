@@ -628,4 +628,362 @@ ZTEST(bridge_config, test_ais_change_does_not_require_reboot)
 	zassert_false(bridge_config_reboot_required());
 }
 
+/* Mirrors the packed layout in bridge_config.c: ssid_len, ssid, psk_len, psk. */
+#define AP_RECORD_LEN 97U
+
+static void make_ap_record(const char *ssid, const char *psk, uint8_t record[AP_RECORD_LEN])
+{
+	memset(record, 0, AP_RECORD_LEN);
+	record[0] = (uint8_t)strlen(ssid);
+	memcpy(&record[1], ssid, strlen(ssid));
+	record[33] = (uint8_t)strlen(psk);
+	memcpy(&record[34], psk, strlen(psk));
+}
+
+static int store_ap_record(const char *ssid, const char *psk)
+{
+	uint8_t record[AP_RECORD_LEN];
+
+	make_ap_record(ssid, psk, record);
+	return bridge_config_test_settings_set("ap", sizeof(record), stored_read_cb, record);
+}
+
+static void fill_ap(struct bridge_config_ap *ap, const char *ssid, const char *psk)
+{
+	memset(ap, 0, sizeof(*ap));
+	strcpy(ap->ssid, ssid);
+	strcpy(ap->psk, psk);
+}
+
+ZTEST(bridge_config, test_ap_defaults_come_from_kconfig)
+{
+	struct bridge_config_ap ap;
+
+	bridge_config_get_ap(&ap);
+
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+	zassert_str_equal(ap.psk, "ChangeMe1234");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_stored_ap_overrides_defaults_without_reboot_flag)
+{
+	struct bridge_config_ap ap;
+
+	zassert_equal(store_ap_record("SY Anna", "harbour99"), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "SY Anna");
+	zassert_str_equal(ap.psk, "harbour99");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_stored_open_ap_overrides_default_psk)
+{
+	struct bridge_config_ap ap;
+
+	zassert_equal(store_ap_record("SY Anna", ""), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.psk, "");
+}
+
+ZTEST(bridge_config, test_malformed_stored_ap_keeps_defaults)
+{
+	struct bridge_config_ap ap;
+	uint8_t record[AP_RECORD_LEN];
+	uint8_t short_value = 1U;
+
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(short_value),
+						      stored_read_cb, &short_value), 0);
+
+	make_ap_record("SY Anna", "harbour99", record);
+	record[0] = 0U; /* AP SSID must not be empty */
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_ap_record("SY Anna", "harbour99", record);
+	record[0] = 33U; /* ssid_len out of range */
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_ap_record("SY Anna", "harbour99", record);
+	record[33] = 64U; /* psk_len out of range */
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_ap_record("SY Anna", "harbour99", record);
+	record[33] = 3U; /* psk_len below the WPA2 minimum */
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_ap_record("SY Anna", "harbour99", record);
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      failing_read_cb, record), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+	zassert_str_equal(ap.psk, "ChangeMe1234");
+}
+
+ZTEST(bridge_config, test_set_ap_persists_record_and_flags_reboot)
+{
+	struct bridge_config_ap next;
+	struct bridge_config_ap ap;
+	uint8_t expected[AP_RECORD_LEN];
+
+	fill_ap(&next, "SY Anna", "harbour99");
+	zassert_equal(bridge_config_set_ap(&next), 0);
+
+	make_ap_record("SY Anna", "harbour99", expected);
+	zassert_equal(save_count, 1);
+	zassert_str_equal(saved[0].name, "bridge/ap");
+	zassert_equal(saved[0].len, sizeof(expected));
+	zassert_mem_equal(saved[0].value, expected, sizeof(expected));
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "SY Anna");
+	zassert_str_equal(ap.psk, "harbour99");
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_ap_accepts_empty_psk_meaning_open_ap)
+{
+	struct bridge_config_ap next;
+
+	fill_ap(&next, "SY Anna", "");
+	zassert_equal(bridge_config_set_ap(&next), 0);
+	zassert_equal(save_count, 1);
+}
+
+ZTEST(bridge_config, test_set_ap_rejects_invalid_fields_without_saving)
+{
+	struct bridge_config_ap next;
+	struct bridge_config_ap ap;
+
+	/* AP SSID must never be empty: the rescue anchor stays findable. */
+	fill_ap(&next, "", "harbour99");
+	zassert_equal(bridge_config_set_ap(&next), -EINVAL);
+
+	/* SSID filling the whole array without terminator = longer than 32 bytes */
+	fill_ap(&next, "", "harbour99");
+	memset(next.ssid, 'a', sizeof(next.ssid));
+	zassert_equal(bridge_config_set_ap(&next), -EINVAL);
+
+	/* PSK shorter than 8 characters */
+	fill_ap(&next, "SY Anna", "short");
+	zassert_equal(bridge_config_set_ap(&next), -EINVAL);
+
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+}
+
+ZTEST(bridge_config, test_set_ap_unchanged_is_a_no_op)
+{
+	struct bridge_config_ap next;
+
+	fill_ap(&next, "ESP-NMEA0183", "ChangeMe1234");
+	zassert_equal(bridge_config_set_ap(&next), 0);
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_ap_save_failure_keeps_previous_config)
+{
+	struct bridge_config_ap next;
+	struct bridge_config_ap ap;
+
+	save_ret = -EIO;
+	fill_ap(&next, "SY Anna", "harbour99");
+
+	zassert_equal(bridge_config_set_ap(&next), -EIO);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+}
+
+ZTEST(bridge_config, test_set_ap_does_not_notify_live_listener)
+{
+	struct bridge_config_ap next;
+
+	bridge_config_set_listener(count_listener);
+	fill_ap(&next, "SY Anna", "harbour99");
+	zassert_equal(bridge_config_set_ap(&next), 0);
+	zassert_equal(listener_count, 0);
+}
+
+/* Mirrors the packed layout in bridge_config.c: hostname_len, hostname. */
+#define SYS_RECORD_LEN 33U
+
+static void make_sys_record(const char *hostname, uint8_t record[SYS_RECORD_LEN])
+{
+	memset(record, 0, SYS_RECORD_LEN);
+	record[0] = (uint8_t)strlen(hostname);
+	memcpy(&record[1], hostname, strlen(hostname));
+}
+
+static int store_sys_record(const char *hostname)
+{
+	uint8_t record[SYS_RECORD_LEN];
+
+	make_sys_record(hostname, record);
+	return bridge_config_test_settings_set("sys", sizeof(record), stored_read_cb, record);
+}
+
+static void fill_system(struct bridge_config_system *system, const char *hostname)
+{
+	memset(system, 0, sizeof(*system));
+	strcpy(system->hostname, hostname);
+}
+
+ZTEST(bridge_config, test_hostname_defaults_to_net_hostname)
+{
+	struct bridge_config_system system;
+
+	bridge_config_get_system(&system);
+
+	zassert_str_equal(system.hostname, "esp-nmea-bridge");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_stored_hostname_overrides_default_without_reboot_flag)
+{
+	struct bridge_config_system system;
+
+	zassert_equal(store_sys_record("sy-anna"), 0);
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "sy-anna");
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_malformed_stored_hostname_keeps_default)
+{
+	struct bridge_config_system system;
+	uint8_t record[SYS_RECORD_LEN];
+	uint8_t short_value = 1U;
+
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(short_value),
+						      stored_read_cb, &short_value), 0);
+
+	make_sys_record("", record); /* empty hostname invalid */
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sys_record("sy-anna", record);
+	record[0] = 33U; /* hostname_len out of range */
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sys_record("Bad_Name", record); /* invalid DNS label characters */
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sys_record("sy-anna", record);
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
+						      failing_read_cb, record), 0);
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "esp-nmea-bridge");
+}
+
+ZTEST(bridge_config, test_set_system_persists_record_and_flags_reboot)
+{
+	struct bridge_config_system next;
+	struct bridge_config_system system;
+	uint8_t expected[SYS_RECORD_LEN];
+
+	fill_system(&next, "sy-anna");
+	zassert_equal(bridge_config_set_system(&next), 0);
+
+	make_sys_record("sy-anna", expected);
+	zassert_equal(save_count, 1);
+	zassert_str_equal(saved[0].name, "bridge/sys");
+	zassert_equal(saved[0].len, sizeof(expected));
+	zassert_mem_equal(saved[0].value, expected, sizeof(expected));
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "sy-anna");
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_system_rejects_invalid_hostnames_without_saving)
+{
+	static const char *const bad_hostnames[] = {
+		"", "-anna", "anna-", "sy_anna", "SY-Anna", "sy.anna", "sy anna",
+		"123456789012345678901234567890123", /* 33 characters */
+	};
+	struct bridge_config_system next;
+	struct bridge_config_system system;
+
+	for (size_t i = 0; i < ARRAY_SIZE(bad_hostnames); i++) {
+		fill_system(&next, bad_hostnames[i]);
+		zassert_equal(bridge_config_set_system(&next), -EINVAL,
+			      "hostname %s must be rejected", bad_hostnames[i]);
+	}
+
+	/* Unterminated hostname array */
+	memset(next.hostname, 'a', sizeof(next.hostname));
+	zassert_equal(bridge_config_set_system(&next), -EINVAL);
+
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "esp-nmea-bridge");
+}
+
+ZTEST(bridge_config, test_set_system_accepts_edge_hostnames)
+{
+	static const char *const good_hostnames[] = {
+		"a", "7seas", "sy-anna-2", "12345678901234567890123456789012", /* 32 chars */
+	};
+	struct bridge_config_system next;
+
+	for (size_t i = 0; i < ARRAY_SIZE(good_hostnames); i++) {
+		fill_system(&next, good_hostnames[i]);
+		zassert_equal(bridge_config_set_system(&next), 0,
+			      "hostname %s must be accepted", good_hostnames[i]);
+	}
+}
+
+ZTEST(bridge_config, test_set_system_unchanged_is_a_no_op)
+{
+	struct bridge_config_system next;
+
+	fill_system(&next, "esp-nmea-bridge");
+	zassert_equal(bridge_config_set_system(&next), 0);
+	zassert_equal(save_count, 0);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_set_system_save_failure_keeps_previous_config)
+{
+	struct bridge_config_system next;
+	struct bridge_config_system system;
+
+	save_ret = -EIO;
+	fill_system(&next, "sy-anna");
+
+	zassert_equal(bridge_config_set_system(&next), -EIO);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "esp-nmea-bridge");
+}
+
+ZTEST(bridge_config, test_set_system_does_not_notify_live_listener)
+{
+	struct bridge_config_system next;
+
+	bridge_config_set_listener(count_listener);
+	fill_system(&next, "sy-anna");
+	zassert_equal(bridge_config_set_system(&next), 0);
+	zassert_equal(listener_count, 0);
+}
+
 ZTEST_SUITE(bridge_config, NULL, NULL, reset_harness, NULL, NULL);

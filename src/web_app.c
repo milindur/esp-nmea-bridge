@@ -61,14 +61,14 @@ int web_app_test_zsock_close(int sock);
 
 LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 
-#define WEB_APP_RX_BUF_SIZE 1024
+#define WEB_APP_RX_BUF_SIZE 1536
 #define WEB_APP_JSON_BUF_SIZE 1536
 #define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
 #define WEB_APP_RECV_TIMEOUT_MS 5000
 #define WEB_APP_CONFIG_PATH "/api/config"
 #define WEB_APP_REBOOT_PATH "/api/reboot"
 /* Must hold a combined POST of every field with escape-heavy strings. */
-#define WEB_APP_CONFIG_BODY_MAX 512
+#define WEB_APP_CONFIG_BODY_MAX 768
 #define WEB_APP_REBOOT_DELAY_MS 750
 
 extern const char web_asset_index_html_start[];
@@ -110,7 +110,7 @@ static uint8_t ota_rx_buf[WEB_APP_RX_BUF_SIZE];
 static bool web_app_test_force_ota_upload_disallowed;
 static size_t web_app_test_json_capacity;
 #endif
-K_THREAD_STACK_DEFINE(web_stack, 4096);
+K_THREAD_STACK_DEFINE(web_stack, 6144);
 
 static int send_all(int fd, const char *data, size_t len)
 {
@@ -362,6 +362,10 @@ struct config_payload {
 	bool tcp_client_enabled;
 	char tcp_client_host[BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX * 2U + 2U];
 	int32_t tcp_client_port;
+	char ap_ssid[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 2U];
+	char ap_psk[BRIDGE_CONFIG_WIFI_PSK_MAX * 2U + 2U];
+	bool ap_psk_clear;
+	char hostname[BRIDGE_CONFIG_HOSTNAME_MAX * 2U + 2U];
 };
 
 static const struct json_obj_descr config_payload_descr[] = {
@@ -375,6 +379,10 @@ static const struct json_obj_descr config_payload_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_enabled, JSON_TOK_TRUE),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_host, JSON_TOK_STRING_BUF),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_port, JSON_TOK_NUMBER),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, ap_ssid, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, ap_psk, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, ap_psk_clear, JSON_TOK_TRUE),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, hostname, JSON_TOK_STRING_BUF),
 };
 
 #define CONFIG_FIELD_AIS_FILTER_ENABLED BIT(0)
@@ -391,8 +399,13 @@ static const struct json_obj_descr config_payload_descr[] = {
 #define CONFIG_FIELDS_STA (CONFIG_FIELD_STA_ENABLED | CONFIG_FIELD_STA_SSID | \
 			   CONFIG_FIELD_STA_PSK | CONFIG_FIELD_STA_PSK_CLEAR | \
 			   CONFIG_FIELD_STA_ROTATE_MAC)
+#define CONFIG_FIELD_AP_SSID BIT(10)
+#define CONFIG_FIELD_AP_PSK BIT(11)
+#define CONFIG_FIELD_AP_PSK_CLEAR BIT(12)
+#define CONFIG_FIELD_HOSTNAME BIT(13)
 #define CONFIG_FIELDS_TCP (CONFIG_FIELD_TCP_CLIENT_ENABLED | CONFIG_FIELD_TCP_CLIENT_HOST | \
 			   CONFIG_FIELD_TCP_CLIENT_PORT)
+#define CONFIG_FIELDS_AP (CONFIG_FIELD_AP_SSID | CONFIG_FIELD_AP_PSK | CONFIG_FIELD_AP_PSK_CLEAR)
 
 /*
  * Strict UTF-8 check (rejects overlongs, surrogates, > U+10FFFF): a stored
@@ -440,25 +453,35 @@ static int write_config_json(int fd, const char *status)
 {
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
+	struct bridge_config_ap ap;
+	struct bridge_config_system system;
 	struct bridge_config_tcp_client tcp;
 	char ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
-	char body[448];
+	char ap_ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
+	char body[640];
 
 	bridge_config_get_ais(&ais);
 	bridge_config_get_sta(&sta);
+	bridge_config_get_ap(&ap);
+	bridge_config_get_system(&system);
 	bridge_config_get_tcp_client(&tcp);
 	json_escape_string(sta.ssid, ssid_json, sizeof(ssid_json));
+	json_escape_string(ap.ssid, ap_ssid_json, sizeof(ap_ssid_json));
 	/* PSKs are write-only through the API; only expose whether one is stored. */
 	(void)snprintk(body, sizeof(body),
 		       "{\"ais_filter_enabled\":%s,\"ais_own_mmsi\":%u,"
 		       "\"sta_enabled\":%s,\"sta_ssid\":\"%s\",\"sta_psk_set\":%s,"
 		       "\"sta_rotate_mac\":%s,"
+		       "\"ap_ssid\":\"%s\",\"ap_psk_set\":%s,"
+		       "\"hostname\":\"%s\","
 		       "\"tcp_client_enabled\":%s,\"tcp_client_host\":\"%s\","
 		       "\"tcp_client_port\":%u,\"reboot_required\":%s}",
 		       ais.filter_enabled ? "true" : "false", ais.own_mmsi,
 		       sta.enabled ? "true" : "false", ssid_json,
 		       sta.psk[0] != '\0' ? "true" : "false",
 		       sta.rotate_mac ? "true" : "false",
+		       ap_ssid_json, ap.psk[0] != '\0' ? "true" : "false",
+		       system.hostname,
 		       tcp.enabled ? "true" : "false", tcp.host, tcp.port,
 		       bridge_config_reboot_required() ? "true" : "false");
 	return write_text_response(fd, status, "application/json", body);
@@ -802,6 +825,8 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	struct config_payload payload;
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
+	struct bridge_config_ap ap;
+	struct bridge_config_system system;
 	struct bridge_config_tcp_client tcp;
 	int fields;
 
@@ -874,6 +899,44 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 					       "cannot be combined with a new password");
 		return;
 	}
+	if ((fields & CONFIG_FIELD_AP_SSID) != 0) {
+		size_t ssid_len = strlen(payload.ap_ssid);
+
+		if (ssid_len < 1U || ssid_len > BRIDGE_CONFIG_WIFI_SSID_MAX) {
+			(void)write_config_field_error(fd, "ap_ssid",
+						       "must be 1 to 32 bytes");
+			return;
+		}
+		if (!utf8_valid(payload.ap_ssid)) {
+			(void)write_config_field_error(fd, "ap_ssid",
+						       "must be valid UTF-8");
+			return;
+		}
+	}
+	if ((fields & CONFIG_FIELD_AP_PSK) != 0) {
+		size_t psk_len = strlen(payload.ap_psk);
+
+		/* Blank means: keep the stored PSK. */
+		if (psk_len != 0U && (psk_len < BRIDGE_CONFIG_WIFI_PSK_MIN ||
+				      psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX)) {
+			(void)write_config_field_error(fd, "ap_psk",
+						       "must be 8 to 63 characters or blank");
+			return;
+		}
+	}
+	if ((fields & CONFIG_FIELD_AP_PSK_CLEAR) != 0 && payload.ap_psk_clear &&
+	    (fields & CONFIG_FIELD_AP_PSK) != 0 && payload.ap_psk[0] != '\0') {
+		(void)write_config_field_error(fd, "ap_psk_clear",
+					       "cannot be combined with a new password");
+		return;
+	}
+	if ((fields & CONFIG_FIELD_HOSTNAME) != 0 &&
+	    (strlen(payload.hostname) > BRIDGE_CONFIG_HOSTNAME_MAX ||
+	     !bridge_config_hostname_valid(payload.hostname))) {
+		(void)write_config_field_error(fd, "hostname",
+					       "must be 1 to 32 lowercase letters, digits, or inner hyphens");
+		return;
+	}
 	if ((fields & CONFIG_FIELD_TCP_CLIENT_HOST) != 0 &&
 	    (strlen(payload.tcp_client_host) > BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX ||
 	     !bridge_config_tcp_client_host_valid(payload.tcp_client_host))) {
@@ -914,6 +977,23 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 		}
 	}
 
+	if ((fields & CONFIG_FIELDS_AP) != 0) {
+		bridge_config_get_ap(&ap);
+		if ((fields & CONFIG_FIELD_AP_SSID) != 0) {
+			strcpy(ap.ssid, payload.ap_ssid);
+		}
+		if ((fields & CONFIG_FIELD_AP_PSK_CLEAR) != 0 && payload.ap_psk_clear) {
+			ap.psk[0] = '\0';
+		} else if ((fields & CONFIG_FIELD_AP_PSK) != 0 && payload.ap_psk[0] != '\0') {
+			strcpy(ap.psk, payload.ap_psk);
+		}
+	}
+
+	if ((fields & CONFIG_FIELD_HOSTNAME) != 0) {
+		bridge_config_get_system(&system);
+		strcpy(system.hostname, payload.hostname);
+	}
+
 	if ((fields & CONFIG_FIELDS_AIS) != 0) {
 		bridge_config_get_ais(&ais);
 		if ((fields & CONFIG_FIELD_AIS_FILTER_ENABLED) != 0) {
@@ -950,6 +1030,18 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	if ((fields & CONFIG_FIELDS_STA) != 0 && bridge_config_set_sta(&sta) != 0) {
 		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
 					  "{\"ok\":false,\"errors\":{\"body\":\"saving WiFi configuration failed\"}}\n");
+		return;
+	}
+
+	if ((fields & CONFIG_FIELDS_AP) != 0 && bridge_config_set_ap(&ap) != 0) {
+		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"saving access point configuration failed\"}}\n");
+		return;
+	}
+
+	if ((fields & CONFIG_FIELD_HOSTNAME) != 0 && bridge_config_set_system(&system) != 0) {
+		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"saving system configuration failed\"}}\n");
 		return;
 	}
 

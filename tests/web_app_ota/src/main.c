@@ -59,6 +59,14 @@ static struct bridge_config_tcp_client fake_tcp;
 static struct bridge_config_tcp_client last_set_tcp;
 static int tcp_set_count;
 static int tcp_set_ret;
+static struct bridge_config_ap fake_ap;
+static struct bridge_config_ap last_set_ap;
+static int ap_set_count;
+static int ap_set_ret;
+static struct bridge_config_system fake_system;
+static struct bridge_config_system last_set_system;
+static int system_set_count;
+static int system_set_ret;
 static bool fake_reboot_required;
 static int reboot_request_count;
 static bool reboot_after_response;
@@ -104,6 +112,20 @@ static void reset_harness(void)
 	fake_tcp.port = 10110;
 	tcp_set_count = 0;
 	tcp_set_ret = 0;
+
+	memset(&fake_ap, 0, sizeof(fake_ap));
+	memset(&last_set_ap, 0, sizeof(last_set_ap));
+	strcpy(fake_ap.ssid, "ESP-NMEA0183");
+	strcpy(fake_ap.psk, "ChangeMe1234");
+	ap_set_count = 0;
+	ap_set_ret = 0;
+
+	memset(&fake_system, 0, sizeof(fake_system));
+	memset(&last_set_system, 0, sizeof(last_set_system));
+	strcpy(fake_system.hostname, "esp-nmea-bridge");
+	system_set_count = 0;
+	system_set_ret = 0;
+
 	fake_reboot_required = false;
 	reboot_request_count = 0;
 	reboot_after_response = false;
@@ -266,6 +288,38 @@ int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *tcp)
 		fake_tcp = *tcp;
 	}
 	return tcp_set_ret;
+}
+
+void bridge_config_get_ap(struct bridge_config_ap *out)
+{
+	*out = fake_ap;
+}
+
+int bridge_config_set_ap(const struct bridge_config_ap *ap)
+{
+	ap_set_count++;
+	last_set_ap = *ap;
+	if (ap_set_ret == 0) {
+		fake_ap = *ap;
+		fake_reboot_required = true;
+	}
+	return ap_set_ret;
+}
+
+void bridge_config_get_system(struct bridge_config_system *out)
+{
+	*out = fake_system;
+}
+
+int bridge_config_set_system(const struct bridge_config_system *system)
+{
+	system_set_count++;
+	last_set_system = *system;
+	if (system_set_ret == 0) {
+		fake_system = *system;
+		fake_reboot_required = true;
+	}
+	return system_set_ret;
 }
 
 bool bridge_config_reboot_required(void)
@@ -1056,6 +1110,252 @@ ZTEST(web_app_config_api, test_post_tcp_save_failure_reports_500)
 
 	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
 	zassert_true(response_contains("saving TCP client configuration failed"));
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_ap_without_psk)
+{
+	reset_harness();
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_true(response_contains("\"ap_ssid\":\"ESP-NMEA0183\""));
+	zassert_true(response_contains("\"ap_psk_set\":true"));
+	zassert_false(response_contains("ChangeMe1234"));
+	zassert_false(response_contains("\"ap_psk\":"));
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_open_ap)
+{
+	reset_harness();
+	fake_ap.psk[0] = '\0';
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("\"ap_psk_set\":false"));
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_hostname)
+{
+	reset_harness();
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("\"hostname\":\"esp-nmea-bridge\""));
+}
+
+ZTEST(web_app_config_api, test_post_ap_ssid_keeps_stored_psk_and_flags_reboot)
+{
+	reset_harness();
+	set_config_post("{\"ap_ssid\":\"SY Anna\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(ap_set_count, 1);
+	zassert_str_equal(last_set_ap.ssid, "SY Anna");
+	zassert_str_equal(last_set_ap.psk, "ChangeMe1234");
+	zassert_equal(sta_set_count, 0);
+	zassert_equal(system_set_count, 0);
+	zassert_true(response_contains("\"ap_ssid\":\"SY Anna\""));
+	zassert_true(response_contains("\"reboot_required\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_blank_ap_psk_keeps_stored_psk)
+{
+	reset_harness();
+	set_config_post("{\"ap_ssid\":\"SY Anna\",\"ap_psk\":\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(ap_set_count, 1);
+	zassert_str_equal(last_set_ap.psk, "ChangeMe1234");
+}
+
+ZTEST(web_app_config_api, test_post_new_ap_psk_stored_but_never_echoed)
+{
+	reset_harness();
+	set_config_post("{\"ap_psk\":\"newharbour1\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(ap_set_count, 1);
+	zassert_str_equal(last_set_ap.psk, "newharbour1");
+	zassert_str_equal(last_set_ap.ssid, "ESP-NMEA0183");
+	zassert_false(response_contains("newharbour1"));
+}
+
+ZTEST(web_app_config_api, test_post_ap_psk_clear_makes_ap_open)
+{
+	reset_harness();
+	set_config_post("{\"ap_psk_clear\":true}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(ap_set_count, 1);
+	zassert_str_equal(last_set_ap.psk, "");
+	zassert_true(response_contains("\"ap_psk_set\":false"));
+}
+
+ZTEST(web_app_config_api, test_post_ap_psk_clear_with_new_psk_rejected)
+{
+	reset_harness();
+	set_config_post("{\"ap_psk_clear\":true,\"ap_psk\":\"newharbour1\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"ap_psk_clear\":"));
+	zassert_equal(ap_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_empty_ap_ssid_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"ap_ssid\":\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"ap_ssid\":"));
+	zassert_equal(ap_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_overlong_ap_ssid_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"ap_ssid\":\"123456789012345678901234567890123\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"ap_ssid\":"));
+	zassert_equal(ap_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_non_utf8_ap_ssid_rejected)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 22\r\n\r\n"
+		    "{\"ap_ssid\":\"Boat\xFFNet\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("must be valid UTF-8"));
+	zassert_equal(ap_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_short_ap_psk_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"ap_psk\":\"short\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"ap_psk\":"));
+	zassert_equal(ap_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_ap_save_failure_reports_500)
+{
+	reset_harness();
+	ap_set_ret = -EIO;
+	set_config_post("{\"ap_ssid\":\"SY Anna\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("saving access point configuration failed"));
+}
+
+ZTEST(web_app_config_api, test_post_hostname_changes_and_flags_reboot)
+{
+	reset_harness();
+	set_config_post("{\"hostname\":\"sy-anna\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(system_set_count, 1);
+	zassert_str_equal(last_set_system.hostname, "sy-anna");
+	zassert_equal(ap_set_count, 0);
+	zassert_true(response_contains("\"hostname\":\"sy-anna\""));
+	zassert_true(response_contains("\"reboot_required\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_invalid_hostname_rejected_with_field_error)
+{
+	static const char *const bad_bodies[] = {
+		"{\"hostname\":\"\"}",
+		"{\"hostname\":\"-anna\"}",
+		"{\"hostname\":\"anna-\"}",
+		"{\"hostname\":\"SY-Anna\"}",
+		"{\"hostname\":\"sy_anna\"}",
+		"{\"hostname\":\"sy.anna\"}",
+		"{\"hostname\":\"123456789012345678901234567890123\"}",
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(bad_bodies); i++) {
+		reset_harness();
+		set_config_post(bad_bodies[i]);
+
+		web_app_test_handle_client(1);
+
+		zassert_true(response_contains("HTTP/1.1 400 Bad Request"),
+			     "body %s must be rejected", bad_bodies[i]);
+		zassert_true(response_contains("\"hostname\":"));
+		zassert_equal(system_set_count, 0);
+	}
+}
+
+ZTEST(web_app_config_api, test_post_hostname_save_failure_reports_500)
+{
+	reset_harness();
+	system_set_ret = -EIO;
+	set_config_post("{\"hostname\":\"sy-anna\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("saving system configuration failed"));
+}
+
+ZTEST(web_app_config_api, test_post_invalid_ap_field_saves_nothing)
+{
+	reset_harness();
+	set_config_post("{\"ais_own_mmsi\":211000000,\"hostname\":\"sy-anna\","
+			"\"ap_psk\":\"short\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(ap_set_count, 0);
+	zassert_equal(system_set_count, 0);
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_combined_ap_and_hostname_saves_both)
+{
+	reset_harness();
+	set_config_post("{\"ap_ssid\":\"SY Anna\",\"ap_psk\":\"harbour99\","
+			"\"hostname\":\"sy-anna\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(ap_set_count, 1);
+	zassert_equal(system_set_count, 1);
+	zassert_str_equal(last_set_ap.ssid, "SY Anna");
+	zassert_str_equal(last_set_ap.psk, "harbour99");
+	zassert_str_equal(last_set_system.hostname, "sy-anna");
 }
 
 ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);

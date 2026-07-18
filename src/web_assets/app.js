@@ -109,6 +109,7 @@ let rebootInProgress = false;
 let configRebootExpectedUntil = 0;
 let rebootGraceUntil = 0;
 let staPskStored = false;
+let apPskStored = false;
 
 function rebootStateCleared() {
   configRebootExpectedUntil = 0;
@@ -119,6 +120,8 @@ function rebootStateCleared() {
 function setConfigMessage(text, severity) { setFormMessage('ais-config-message', text, severity); }
 function setStaMessage(text, severity) { setFormMessage('sta-config-message', text, severity); }
 function setTcpMessage(text, severity) { setFormMessage('tcp-config-message', text, severity); }
+function setApMessage(text, severity) { setFormMessage('ap-config-message', text, severity); }
+function setSystemMessage(text, severity) { setFormMessage('system-config-message', text, severity); }
 
 function setFormMessage(id, text, severity) {
   const el = $(id);
@@ -140,13 +143,15 @@ function setConfigFieldError(text) { setFieldError('ais-mmsi-error', text); }
 function updateConfigControls() {
   const disabled = !configLoaded || configSaving || rebootInProgress;
   for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-rotate-mac', 'sta-psk-clear',
-                    'tcp-enabled', 'tcp-host', 'tcp-port']) {
+                    'tcp-enabled', 'tcp-host', 'tcp-port', 'ap-ssid', 'ap-psk-clear', 'system-hostname']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
   const psk = $('sta-psk');
   if (psk) psk.disabled = disabled || $('sta-psk-clear').checked;
-  for (const id of ['ais-save', 'sta-save', 'tcp-save']) {
+  const apPsk = $('ap-psk');
+  if (apPsk) apPsk.disabled = disabled || $('ap-psk-clear').checked;
+  for (const id of ['ais-save', 'sta-save', 'tcp-save', 'ap-save', 'system-save']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
@@ -157,8 +162,10 @@ function updateConfigControls() {
 function renderRebootRequired(required) {
   const banner = $('reboot-banner');
   if (banner) banner.hidden = !required;
-  const badge = $('sta-reboot-badge');
-  if (badge) badge.hidden = !required;
+  for (const id of ['sta-reboot-badge', 'ap-reboot-badge', 'system-reboot-badge']) {
+    const badge = $(id);
+    if (badge) badge.hidden = !required;
+  }
 }
 
 function renderAisConfig(cfg) {
@@ -199,11 +206,28 @@ function renderStaConfig(cfg) {
   $('sta-psk-clear-row').hidden = !staPskStored;
 }
 
+function renderApConfig(cfg) {
+  $('ap-ssid').value = String(cfg.ap_ssid ?? '');
+  apPskStored = Boolean(cfg.ap_psk_set);
+  const psk = $('ap-psk');
+  psk.value = '';
+  psk.placeholder = apPskStored ? 'Leave blank to keep the stored password' : 'No password stored (open access point)';
+  const clear = $('ap-psk-clear');
+  clear.checked = false;
+  $('ap-psk-clear-row').hidden = !apPskStored;
+}
+
+function renderSystemConfig(cfg) {
+  $('system-hostname').value = String(cfg.hostname ?? '');
+}
+
 /* Renders everything; per-card saves render only their own card so an
  * unsaved edit in the other card is never clobbered. */
 function renderConfig(cfg) {
   renderAisConfig(cfg);
   renderStaConfig(cfg);
+  renderApConfig(cfg);
+  renderSystemConfig(cfg);
   renderTcpConfig(cfg);
   renderRebootRequired(Boolean(cfg.reboot_required));
 }
@@ -217,14 +241,21 @@ async function loadConfig() {
     setConfigFieldError('');
     setFieldError('sta-ssid-error', '');
     setFieldError('sta-psk-error', '');
+    setFieldError('ap-ssid-error', '');
+    setFieldError('ap-psk-error', '');
+    setFieldError('system-hostname-error', '');
     setFieldError('tcp-host-error', '');
     setFieldError('tcp-port-error', '');
     setConfigMessage('Changes apply immediately after saving.');
     setStaMessage('Changes take effect after the next reboot.');
+    setApMessage('Changes take effect after the next reboot.');
+    setSystemMessage('Changes take effect after the next reboot.');
     setTcpMessage('Changes apply immediately after saving.');
   } catch (error) {
     setConfigMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setStaMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
+    setApMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
+    setSystemMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setTcpMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setTimeout(loadConfig, 5000);
   }
@@ -335,6 +366,76 @@ async function handleStaSubmit(event) {
   updateConfigControls();
 }
 
+async function handleApSubmit(event) {
+  event.preventDefault();
+  const ssid = $('ap-ssid').value;
+  const pskClear = $('ap-psk-clear').checked;
+  const psk = pskClear ? '' : $('ap-psk').value;
+  const ssidBytes = new TextEncoder().encode(ssid).length;
+  const ssidError = ssidBytes < 1 || ssidBytes > 32 ? 'Enter an SSID of 1 to 32 bytes.' : '';
+  const pskError = staPskError(new TextEncoder().encode(psk).length);
+
+  setFieldError('ap-ssid-error', ssidError);
+  setFieldError('ap-psk-error', pskError);
+  if (ssidError || pskError) {
+    setApMessage('Not saved.', 'bad');
+    return;
+  }
+
+  const body = { ap_ssid: ssid };
+  if (pskClear) body.ap_psk_clear = true;
+  else if (psk !== '') body.ap_psk = psk;
+
+  configSaving = true;
+  updateConfigControls();
+  setApMessage('Saving…', 'warn');
+
+  try {
+    await postConfig(body, (errors) => {
+      if (errors.ap_ssid) setFieldError('ap-ssid-error', `SSID ${errors.ap_ssid}.`);
+      if (errors.ap_psk) setFieldError('ap-psk-error', `Password ${errors.ap_psk}.`);
+      if (errors.ap_psk_clear) setFieldError('ap-psk-error', `Password ${errors.ap_psk_clear}.`);
+    }, renderApConfig);
+    setApMessage('Saved. Reboot the bridge to apply the new access point settings.', 'ok');
+  } catch (error) {
+    setApMessage(`Saving failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
+function hostnameError(hostname) {
+  return /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(hostname)
+    ? '' : 'Enter 1 to 32 lowercase letters, digits, or hyphens; no hyphen at the start or end.';
+}
+
+async function handleSystemSubmit(event) {
+  event.preventDefault();
+  const hostname = $('system-hostname').value.trim();
+  const error = hostnameError(hostname);
+
+  setFieldError('system-hostname-error', error);
+  if (error) {
+    setSystemMessage('Not saved.', 'bad');
+    return;
+  }
+
+  configSaving = true;
+  updateConfigControls();
+  setSystemMessage('Saving…', 'warn');
+
+  try {
+    await postConfig({ hostname }, (errors) => {
+      if (errors.hostname) setFieldError('system-hostname-error', `Hostname ${errors.hostname}.`);
+    }, renderSystemConfig);
+    setSystemMessage('Saved. Reboot the bridge to apply the new hostname.', 'ok');
+  } catch (error) {
+    setSystemMessage(`Saving failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
 function tcpHostError(host) {
   if (host === '') return '';
   const octets = host.split('.');
@@ -410,8 +511,14 @@ function wireConfigUi() {
   if (staForm) staForm.addEventListener('submit', handleStaSubmit);
   const tcpForm = $('tcp-config-form');
   if (tcpForm) tcpForm.addEventListener('submit', handleTcpSubmit);
+  const apForm = $('ap-config-form');
+  if (apForm) apForm.addEventListener('submit', handleApSubmit);
+  const systemForm = $('system-config-form');
+  if (systemForm) systemForm.addEventListener('submit', handleSystemSubmit);
   const pskClear = $('sta-psk-clear');
   if (pskClear) pskClear.addEventListener('change', updateConfigControls);
+  const apPskClear = $('ap-psk-clear');
+  if (apPskClear) apPskClear.addEventListener('change', updateConfigControls);
   const reboot = $('reboot-button');
   if (reboot) reboot.addEventListener('click', handleReboot);
   updateConfigControls();

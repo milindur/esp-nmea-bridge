@@ -148,6 +148,32 @@
         </form>
       </section>
 
+      <section class="panel" aria-labelledby="ap-config-title">
+        <header class="panel-header">
+          <h2 id="ap-config-title">Wi-Fi access point</h2>
+          <span id="ap-reboot-badge" class="badge state-warn" hidden>Reboot required</span>
+        </header>
+        <form id="ap-config-form" class="config-form" aria-describedby="ap-config-help">
+          <p id="ap-config-help" class="config-help">Your boat's own Wi-Fi network. The access point always stays enabled as a rescue anchor; name and password changes take effect after the next reboot.</p>
+          <label class="config-field" for="ap-ssid">
+            <span class="label">Access point SSID</span>
+            <input id="ap-ssid" type="text" autocomplete="off" spellcheck="false">
+            <span id="ap-ssid-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <label class="config-field" for="ap-psk">
+            <span class="label">Password</span>
+            <input id="ap-psk" type="password" autocomplete="new-password">
+            <span id="ap-psk-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <label class="config-check" for="ap-psk-clear" id="ap-psk-clear-row" hidden>
+            <input id="ap-psk-clear" type="checkbox">
+            <span>Remove stored password (open access point)</span>
+          </label>
+          <button id="ap-save" class="button" type="submit" disabled>Save</button>
+          <p id="ap-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+        </form>
+      </section>
+
       <section class="panel" aria-labelledby="tcp-config-title">
         <header class="panel-header">
           <h2 id="tcp-config-title">NMEA TCP client</h2>
@@ -191,6 +217,23 @@
           </label>
           <button id="ais-save" class="button" type="submit" disabled>Save</button>
           <p id="ais-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="system-config-title">
+        <header class="panel-header">
+          <h2 id="system-config-title">System</h2>
+          <span id="system-reboot-badge" class="badge state-warn" hidden>Reboot required</span>
+        </header>
+        <form id="system-config-form" class="config-form" aria-describedby="system-config-help">
+          <p id="system-config-help" class="config-help">The bridge's name on the network: it appears in your router's client list and, with mDNS enabled, the web app is reachable at http://&lt;hostname&gt;.local. Takes effect after the next reboot.</p>
+          <label class="config-field" for="system-hostname">
+            <span class="label">Hostname</span>
+            <input id="system-hostname" type="text" autocomplete="off" spellcheck="false" maxlength="32" placeholder="lowercase letters, digits, hyphens">
+            <span id="system-hostname-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <button id="system-save" class="button" type="submit" disabled>Save</button>
+          <p id="system-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
         </form>
       </section>
     </section>
