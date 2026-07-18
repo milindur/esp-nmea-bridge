@@ -51,7 +51,11 @@ void tcp_nmea_client_config_changed(void)
 		atomic_inc(&config_gen);
 		k_sem_give(&config_change_sem);
 		if (session_fd >= 0) {
-			(void)zsock_shutdown(session_fd, ZSOCK_SHUT_RDWR);
+			/* Zephyr only implements SHUT_RD: it marks the socket
+			 * EOF so the session's next drain sees a peer close.
+			 * SHUT_WR/SHUT_RDWR return ENOTSUP.
+			 */
+			(void)zsock_shutdown(session_fd, ZSOCK_SHUT_RD);
 		}
 	}
 	k_mutex_unlock(&session_fd_lock);
@@ -160,14 +164,18 @@ static void client_thread(void *a, void *b, void *c)
 		}
 
 		/* Registered before connecting so a live configuration change can
-		 * shut down even an in-flight connect attempt.
+		 * reach an in-flight connect attempt.
 		 */
 		k_mutex_lock(&session_fd_lock, K_FOREVER);
 		session_fd = fd;
 		k_mutex_unlock(&session_fd_lock);
 		if (atomic_get(&config_gen) != gen) {
-			/* Changed since the snapshot: end this attempt right away. */
-			(void)zsock_shutdown(fd, ZSOCK_SHUT_RDWR);
+			/* Changed since the snapshot: drop this attempt. */
+			k_mutex_lock(&session_fd_lock, K_FOREVER);
+			session_fd = -1;
+			(void)zsock_close(fd);
+			k_mutex_unlock(&session_fd_lock);
+			continue;
 		}
 
 		if (connect_server(fd, &host, cfg.port) != 0) {
@@ -178,6 +186,14 @@ static void client_thread(void *a, void *b, void *c)
 			wait_or_config_change(K_SECONDS(backoff_s));
 			backoff_s = MIN(backoff_s * 2, 30U);
 			continue;
+		}
+
+		/* SHUT_RD is a no-op on an unconnected socket, so a change that
+		 * fired mid-connect could not end this session; re-check now
+		 * that the socket is connected and EOF-markable.
+		 */
+		if (atomic_get(&config_gen) != gen) {
+			(void)zsock_shutdown(fd, ZSOCK_SHUT_RD);
 		}
 
 		status_led_tcp_nmea_client_connecting(false);
