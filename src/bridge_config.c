@@ -570,15 +570,17 @@ int bridge_config_set_system(const struct bridge_config_system *next)
 }
 
 /*
- * One enumeration pass collects at most this many key names; more stored
- * keys than that just take another delete-and-rescan pass. Any name the
- * settings core accepts fits a slot, so no legal key can escape deletion.
+ * One enumeration pass collects at most this many full key names; more
+ * stored keys than that just take another delete-and-rescan pass. Any name
+ * the settings core accepts fits a slot, so no legal key can escape
+ * deletion.
  */
 #define RESET_KEYS_PER_PASS 8U
 #define RESET_KEY_NAME_MAX SETTINGS_MAX_NAME_LEN
+#define RESET_FULL_NAME_LEN (sizeof(BRIDGE_CONFIG_SUBTREE) + RESET_KEY_NAME_MAX + 1U)
 
 struct reset_key_batch {
-	char names[RESET_KEYS_PER_PASS][RESET_KEY_NAME_MAX + 1];
+	char names[RESET_KEYS_PER_PASS][RESET_FULL_NAME_LEN];
 	size_t count;
 	bool more;
 	/*
@@ -598,7 +600,7 @@ static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_c
 	ARG_UNUSED(read_cb);
 	ARG_UNUSED(cb_arg);
 
-	if (strlen(key) > RESET_KEY_NAME_MAX) {
+	if (key != NULL && strlen(key) > RESET_KEY_NAME_MAX) {
 		/* Corrupt store: skipping it silently would fake a full reset. */
 		batch->err = -ENAMETOOLONG;
 		return -ENAMETOOLONG;
@@ -608,7 +610,18 @@ static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_c
 		batch->more = true;
 		return 1;
 	}
-	strcpy(batch->names[batch->count++], key);
+	if (key == NULL) {
+		/*
+		 * A record named exactly "bridge" matches the subtree with
+		 * nothing left over; settings_name_steq() then leaves the
+		 * key NULL.
+		 */
+		strcpy(batch->names[batch->count], BRIDGE_CONFIG_SUBTREE);
+	} else {
+		(void)snprintk(batch->names[batch->count], sizeof(batch->names[0]),
+			       "%s/%s", BRIDGE_CONFIG_SUBTREE, key);
+	}
+	batch->count++;
 	return 0;
 }
 
@@ -625,22 +638,22 @@ int bridge_config_factory_reset(void)
 		batch.err = 0;
 		(void)cfg_settings_load_subtree_direct(BRIDGE_CONFIG_SUBTREE,
 						       reset_collect_cb, &batch);
-		if (batch.err != 0) {
-			LOG_ERR("Enumerating stored configuration failed: %d", batch.err);
-			ret = batch.err;
-			break;
-		}
+		/*
+		 * Delete what this pass collected even when enumeration ended
+		 * in an error, so retries on a corrupt store still converge:
+		 * every attempt removes the valid overrides it saw.
+		 */
 		for (size_t i = 0; i < batch.count; i++) {
-			char name[sizeof(BRIDGE_CONFIG_SUBTREE) + RESET_KEY_NAME_MAX + 1];
-
-			(void)snprintk(name, sizeof(name), "%s/%s", BRIDGE_CONFIG_SUBTREE,
-				       batch.names[i]);
-			ret = cfg_settings_delete(name);
+			ret = cfg_settings_delete(batch.names[i]);
 			if (ret != 0) {
-				LOG_ERR("Deleting %s failed: %d", name, ret);
+				LOG_ERR("Deleting %s failed: %d", batch.names[i], ret);
 				break;
 			}
 			any_deleted = true;
+		}
+		if (ret == 0 && batch.err != 0) {
+			LOG_ERR("Enumerating stored configuration failed: %d", batch.err);
+			ret = batch.err;
 		}
 	} while (ret == 0 && batch.more);
 

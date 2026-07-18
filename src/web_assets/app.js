@@ -520,6 +520,12 @@ async function handleFactoryReset() {
     setFactoryResetMessage('All stored settings erased. Reboot to return to the build-time defaults.', 'ok');
   } catch (error) {
     setFactoryResetMessage(`Factory reset failed: ${error.message}.`, 'bad');
+    configSaving = false;
+    updateConfigControls();
+    // Even a failed reset may already have deleted overrides and require a
+    // reboot; re-fetch so the banner reflects the device state.
+    loadConfig();
+    return;
   }
   configSaving = false;
   updateConfigControls();

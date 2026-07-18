@@ -51,6 +51,13 @@ int bridge_config_test_settings_load_subtree(const char *subtree)
 	return 0;
 }
 
+/* An empty name models a record named exactly "bridge" (no key part). */
+static void store_key(const char *name)
+{
+	zassert_true(stored_key_count < FAKE_STORE_MAX_KEYS);
+	strcpy(stored_keys[stored_key_count++], name);
+}
+
 int bridge_config_test_settings_save_one(const char *name, const void *value, size_t val_len)
 {
 	if (save_ret != 0) {
@@ -62,6 +69,18 @@ int bridge_config_test_settings_save_one(const char *name, const void *value, si
 		saved[save_count].len = val_len;
 	}
 	save_count++;
+
+	/* A save re-creates the stored override the enumeration must see. */
+	if (strncmp(name, "bridge/", 7U) == 0) {
+		bool present = false;
+
+		for (int i = 0; i < stored_key_count; i++) {
+			present = present || strcmp(stored_keys[i], name + 7) == 0;
+		}
+		if (!present) {
+			store_key(name + 7);
+		}
+	}
 	return 0;
 }
 
@@ -75,7 +94,10 @@ int bridge_config_test_settings_load_subtree_direct(const char *subtree,
 	load_direct_count++;
 	zassert_str_equal(subtree, "bridge");
 	for (int i = 0; i < stored_key_count; i++) {
-		if (cb(stored_keys[i], 0U, NULL, NULL, param) != 0) {
+		/* Zephyr passes NULL for a record named exactly "bridge". */
+		const char *key = stored_keys[i][0] == '\0' ? NULL : stored_keys[i];
+
+		if (cb(key, 0U, NULL, NULL, param) != 0) {
 			break;
 		}
 	}
@@ -84,13 +106,17 @@ int bridge_config_test_settings_load_subtree_direct(const char *subtree,
 
 int bridge_config_test_settings_delete(const char *name)
 {
+	const char *rel;
+
+	zassert_true(strncmp(name, "bridge", 6U) == 0 && (name[6] == '\0' || name[6] == '/'),
+		     "delete outside subtree: %s", name);
+	rel = name[6] == '\0' ? "" : name + 7;
 	if (delete_count == delete_fail_at) {
 		return -EIO;
 	}
-	zassert_true(strncmp(name, "bridge/", 7U) == 0, "delete outside subtree: %s", name);
 	delete_count++;
 	for (int i = 0; i < stored_key_count; i++) {
-		if (strcmp(stored_keys[i], name + 7) == 0) {
+		if (strcmp(stored_keys[i], rel) == 0) {
 			memmove(&stored_keys[i], &stored_keys[i + 1],
 				(size_t)(stored_key_count - i - 1) * sizeof(stored_keys[0]));
 			stored_key_count--;
@@ -99,12 +125,6 @@ int bridge_config_test_settings_delete(const char *name)
 	}
 	zassert_unreachable("deleted unknown key %s", name);
 	return 0;
-}
-
-static void store_key(const char *name)
-{
-	zassert_true(stored_key_count < FAKE_STORE_MAX_KEYS);
-	strcpy(stored_keys[stored_key_count++], name);
 }
 
 static ssize_t stored_read_cb(void *cb_arg, void *data, size_t len)
@@ -1259,6 +1279,8 @@ ZTEST(bridge_config, test_factory_reset_then_reboot_runs_on_kconfig_defaults)
 	zassert_equal(store_record(false, 211000000U), 0);
 	store_key("ais");
 	zassert_equal(bridge_config_factory_reset(), 0);
+	/* Nothing left for the boot-time load to replay. */
+	zassert_equal(stored_key_count, 0);
 
 	/* Reboot: fresh RAM state, loading from the now-empty store. */
 	bridge_config_test_reset();
@@ -1268,6 +1290,49 @@ ZTEST(bridge_config, test_factory_reset_then_reboot_runs_on_kconfig_defaults)
 	zassert_true(ais.filter_enabled);
 	zassert_equal(ais.own_mmsi, TEST_DEFAULT_MMSI);
 	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_deletes_bare_subtree_record)
+{
+	store_key("ais");
+	/* A record named exactly "bridge"; the callback then sees NULL. */
+	store_key("");
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+	zassert_equal(stored_key_count, 0);
+	zassert_equal(delete_count, 2);
+}
+
+ZTEST(bridge_config, test_factory_reset_deletes_valid_keys_despite_corrupt_one)
+{
+	char long_key[SETTINGS_MAX_NAME_LEN + 2];
+
+	store_key("ais");
+	memset(long_key, 'x', sizeof(long_key) - 1U);
+	long_key[sizeof(long_key) - 1U] = '\0';
+	store_key(long_key);
+
+	zassert_equal(bridge_config_factory_reset(), -ENAMETOOLONG);
+	/* The valid override is gone; only the corrupt record remains. */
+	zassert_equal(delete_count, 1);
+	zassert_equal(stored_key_count, 1);
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_second_reset_deletes_repersisted_override)
+{
+	struct bridge_config_ais ais;
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+
+	/* The forced save re-creates the stored override... */
+	bridge_config_get_ais(&ais);
+	zassert_equal(bridge_config_set_ais(&ais), 0);
+	zassert_equal(stored_key_count, 1);
+
+	/* ...and a second reset must delete it again. */
+	zassert_equal(bridge_config_factory_reset(), 0);
+	zassert_equal(stored_key_count, 0);
 }
 
 ZTEST(bridge_config, test_forced_save_after_reset_does_not_notify_listener)
