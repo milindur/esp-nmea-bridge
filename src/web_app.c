@@ -67,7 +67,8 @@ LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 #define WEB_APP_RECV_TIMEOUT_MS 5000
 #define WEB_APP_CONFIG_PATH "/api/config"
 #define WEB_APP_REBOOT_PATH "/api/reboot"
-#define WEB_APP_CONFIG_BODY_MAX 384
+/* Must hold a combined POST of every field with escape-heavy strings. */
+#define WEB_APP_CONFIG_BODY_MAX 512
 #define WEB_APP_REBOOT_DELAY_MS 750
 
 extern const char web_asset_index_html_start[];

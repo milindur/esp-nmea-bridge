@@ -828,6 +828,7 @@ ZTEST(web_app_config_api, test_post_ais_only_does_not_touch_sta)
 	zassert_true(response_contains("HTTP/1.1 200 OK"));
 	zassert_equal(config_set_count, 1);
 	zassert_equal(sta_set_count, 0);
+	zassert_equal(tcp_set_count, 0);
 	zassert_true(response_contains("\"reboot_required\":false"));
 }
 
@@ -964,6 +965,19 @@ ZTEST(web_app_config_api, test_post_invalid_tcp_host_rejected_with_field_error)
 
 	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
 	zassert_true(response_contains("\"tcp_client_host\":\"must be an IPv4 address or blank\""));
+	zassert_equal(tcp_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_overlong_dotted_tcp_host_rejected)
+{
+	reset_harness();
+	/* 16 digits-and-dots characters: exceeds the 15-byte host capacity. */
+	set_config_post("{\"tcp_client_host\":\"1111.1111.1111.1\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"tcp_client_host\":"));
 	zassert_equal(tcp_set_count, 0);
 }
 

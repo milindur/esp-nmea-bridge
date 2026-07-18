@@ -28,27 +28,37 @@ static K_SEM_DEFINE(config_change_sem, 0, 1);
 static K_MUTEX_DEFINE(session_fd_lock);
 static int session_fd = -1;
 static atomic_t config_gen;
+/* Last configuration this module reacted to; guarded by session_fd_lock. */
+static struct bridge_config_tcp_client seen_cfg;
+static bool seen_cfg_valid;
 
 void tcp_nmea_client_config_changed(void)
 {
-	atomic_inc(&config_gen);
-	k_sem_give(&config_change_sem);
+	struct bridge_config_tcp_client cfg;
+	bool changed;
+
+	bridge_config_get_tcp_client(&cfg);
 
 	k_mutex_lock(&session_fd_lock, K_FOREVER);
-	if (session_fd >= 0) {
-		(void)zsock_shutdown(session_fd, ZSOCK_SHUT_RDWR);
+	/* The bridge-configuration listener fans out every live change (e.g.
+	 * AIS); only a TCP client change may drop the active session.
+	 */
+	changed = !seen_cfg_valid || seen_cfg.enabled != cfg.enabled ||
+		  seen_cfg.port != cfg.port || strcmp(seen_cfg.host, cfg.host) != 0;
+	seen_cfg = cfg;
+	seen_cfg_valid = true;
+	if (changed) {
+		atomic_inc(&config_gen);
+		k_sem_give(&config_change_sem);
+		if (session_fd >= 0) {
+			(void)zsock_shutdown(session_fd, ZSOCK_SHUT_RDWR);
+		}
 	}
 	k_mutex_unlock(&session_fd_lock);
 }
 
-static int connect_server(const struct net_in_addr *host, uint16_t port)
+static int connect_server(int fd, const struct net_in_addr *host, uint16_t port)
 {
-	int fd = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (fd < 0) {
-		LOG_ERR("TCP NMEA client socket failed: errno=%d", errno);
-		return -errno;
-	}
-
 	struct sockaddr_in addr = { 0 };
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(port);
@@ -61,7 +71,6 @@ static int connect_server(const struct net_in_addr *host, uint16_t port)
 	if (zsock_connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		int ret = -errno;
 		LOG_WRN("TCP NMEA connect failed: errno=%d", errno);
-		(void)zsock_close(fd);
 		return ret;
 	}
 
@@ -69,7 +78,7 @@ static int connect_server(const struct net_in_addr *host, uint16_t port)
 	(void)zsock_fcntl(fd, ZVFS_F_SETFL, flags | ZVFS_O_NONBLOCK);
 
 	LOG_INF("TCP NMEA client connected");
-	return fd;
+	return 0;
 }
 
 static bool resolve_host(const struct bridge_config_tcp_client *cfg, struct net_in_addr *host)
@@ -142,19 +151,33 @@ static void client_thread(void *a, void *b, void *c)
 
 		status_led_tcp_nmea_client_connecting(true);
 
-		int fd = connect_server(&host, cfg.port);
+		int fd = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (fd < 0) {
+			LOG_ERR("TCP NMEA client socket failed: errno=%d", errno);
 			wait_or_config_change(K_SECONDS(backoff_s));
 			backoff_s = MIN(backoff_s * 2, 30U);
 			continue;
 		}
 
+		/* Registered before connecting so a live configuration change can
+		 * shut down even an in-flight connect attempt.
+		 */
 		k_mutex_lock(&session_fd_lock, K_FOREVER);
 		session_fd = fd;
 		k_mutex_unlock(&session_fd_lock);
 		if (atomic_get(&config_gen) != gen) {
-			/* Changed while connecting: end this session right away. */
+			/* Changed since the snapshot: end this attempt right away. */
 			(void)zsock_shutdown(fd, ZSOCK_SHUT_RDWR);
+		}
+
+		if (connect_server(fd, &host, cfg.port) != 0) {
+			k_mutex_lock(&session_fd_lock, K_FOREVER);
+			session_fd = -1;
+			(void)zsock_close(fd);
+			k_mutex_unlock(&session_fd_lock);
+			wait_or_config_change(K_SECONDS(backoff_s));
+			backoff_s = MIN(backoff_s * 2, 30U);
+			continue;
 		}
 
 		status_led_tcp_nmea_client_connecting(false);

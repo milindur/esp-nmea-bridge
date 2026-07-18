@@ -532,6 +532,23 @@ ZTEST(bridge_config, test_set_tcp_persists_record_and_notifies_listener)
 	zassert_equal(tcp.port, 2000);
 }
 
+ZTEST(bridge_config, test_tcp_max_length_host_round_trips)
+{
+	struct bridge_config_tcp_client next;
+	struct bridge_config_tcp_client tcp;
+
+	/* 15 characters: exactly fills the packed record's host field. */
+	fill_tcp(&next, true, "255.255.255.255", 65535);
+	zassert_equal(bridge_config_set_tcp_client(&next), 0);
+	zassert_equal(save_count, 1);
+
+	zassert_equal(bridge_config_test_settings_set("tcp", saved[0].len,
+						      stored_read_cb, saved[0].value), 0);
+	bridge_config_get_tcp_client(&tcp);
+	zassert_str_equal(tcp.host, "255.255.255.255");
+	zassert_equal(tcp.port, 65535);
+}
+
 ZTEST(bridge_config, test_set_tcp_accepts_empty_host_meaning_gateway)
 {
 	struct bridge_config_tcp_client next;

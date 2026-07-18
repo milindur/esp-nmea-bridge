@@ -372,7 +372,9 @@ async function handleTcpSubmit(event) {
       if (errors.tcp_client_host) setFieldError('tcp-host-error', `Address ${errors.tcp_client_host}.`);
       if (errors.tcp_client_port) setFieldError('tcp-port-error', `Port ${errors.tcp_client_port}.`);
     }, renderTcpConfig);
-    setTcpMessage('Saved. The client now uses the new target.', 'ok');
+    setTcpMessage($('tcp-enabled').checked
+      ? 'Saved. The client now uses the new target.'
+      : 'Saved. The client is disabled.', 'ok');
   } catch (error) {
     setTcpMessage(`Saving failed: ${error.message}.`, 'bad');
   }

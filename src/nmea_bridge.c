@@ -10,10 +10,12 @@ LOG_MODULE_REGISTER(nmea_bridge, LOG_LEVEL_INF);
 
 #define MAX_SINKS CONFIG_ESP_NMEA_BRIDGE_NMEA_SINKS_MAX
 
+/* The TCP NMEA client is always built and runtime-enablable, so its sink
+ * slot is reserved regardless of the build-time enable default.
+ */
 BUILD_ASSERT(CONFIG_ESP_NMEA_BRIDGE_NMEA_SINKS_MAX >=
 	     (IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE) ?
-	      CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_MAX_PEERS : 0) +
-	     (IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE) ? 1 : 0),
+	      CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_MAX_PEERS : 0) + 1,
 	     "NMEA bridge sinks must cover TCP server peers plus TCP NMEA client");
 
 K_MSGQ_DEFINE(ingest_msgq, sizeof(struct nmea_frame),
