@@ -107,7 +107,14 @@ let configLoaded = false;
 let configSaving = false;
 let rebootInProgress = false;
 let configRebootExpectedUntil = 0;
+let rebootGraceUntil = 0;
 let staPskStored = false;
+
+function rebootStateCleared() {
+  configRebootExpectedUntil = 0;
+  rebootGraceUntil = 0;
+  rebootInProgress = false;
+}
 
 function setConfigMessage(text, severity) { setFormMessage('ais-config-message', text, severity); }
 function setStaMessage(text, severity) { setFormMessage('sta-config-message', text, severity); }
@@ -131,10 +138,12 @@ function setConfigFieldError(text) { setFieldError('ais-mmsi-error', text); }
 
 function updateConfigControls() {
   const disabled = !configLoaded || configSaving || rebootInProgress;
-  for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-psk', 'sta-rotate-mac']) {
+  for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-rotate-mac', 'sta-psk-clear']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
+  const psk = $('sta-psk');
+  if (psk) psk.disabled = disabled || $('sta-psk-clear').checked;
   for (const id of ['ais-save', 'sta-save']) {
     const el = $(id);
     if (el) el.disabled = disabled;
@@ -150,9 +159,12 @@ function renderRebootRequired(required) {
   if (badge) badge.hidden = !required;
 }
 
-function renderConfig(cfg) {
+function renderAisConfig(cfg) {
   $('ais-enabled').checked = Boolean(cfg.ais_filter_enabled);
   $('ais-mmsi').value = String(cfg.ais_own_mmsi ?? 0);
+}
+
+function renderStaConfig(cfg) {
   $('sta-enabled').checked = Boolean(cfg.sta_enabled);
   $('sta-ssid').value = String(cfg.sta_ssid ?? '');
   $('sta-rotate-mac').checked = Boolean(cfg.sta_rotate_mac);
@@ -160,6 +172,16 @@ function renderConfig(cfg) {
   const psk = $('sta-psk');
   psk.value = '';
   psk.placeholder = staPskStored ? 'Leave blank to keep the stored password' : 'No password stored (open network)';
+  const clear = $('sta-psk-clear');
+  clear.checked = false;
+  $('sta-psk-clear-row').hidden = !staPskStored;
+}
+
+/* Renders everything; per-card saves render only their own card so an
+ * unsaved edit in the other card is never clobbered. */
+function renderConfig(cfg) {
+  renderAisConfig(cfg);
+  renderStaConfig(cfg);
   renderRebootRequired(Boolean(cfg.reboot_required));
 }
 
@@ -182,7 +204,7 @@ async function loadConfig() {
   updateConfigControls();
 }
 
-async function postConfig(body, onFieldErrors) {
+async function postConfig(body, onFieldErrors, renderCard) {
   const r = await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -195,7 +217,8 @@ async function postConfig(body, onFieldErrors) {
     const first = Object.values(errors)[0];
     throw new Error(first || `HTTP ${r.status}`);
   }
-  renderConfig(payload || {});
+  renderCard(payload || {});
+  renderRebootRequired(Boolean((payload || {}).reboot_required));
   return payload || {};
 }
 
@@ -220,7 +243,7 @@ async function handleConfigSubmit(event) {
       ais_own_mmsi: Number(mmsiText),
     }, (errors) => {
       if (errors.ais_own_mmsi) setConfigFieldError(`Own MMSI ${errors.ais_own_mmsi}.`);
-    });
+    }, renderAisConfig);
     setConfigMessage('Saved. The filter now uses the new settings.', 'ok');
   } catch (error) {
     setConfigMessage(`Saving failed: ${error.message}.`, 'bad');
@@ -238,12 +261,25 @@ function staPskError(pskLength) {
     ? 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.' : '';
 }
 
+function staBody({ enabled, ssid, psk, pskClear, rotateMac }) {
+  const body = { sta_enabled: enabled, sta_rotate_mac: rotateMac };
+  // An empty SSID field while disabling keeps the stored SSID, so a
+  // factory-default device can still be saved (e.g. to turn STA off).
+  if (ssid !== '' || enabled) body.sta_ssid = ssid;
+  if (pskClear) body.sta_psk_clear = true;
+  else if (psk !== '') body.sta_psk = psk;
+  return body;
+}
+
 async function handleStaSubmit(event) {
   event.preventDefault();
+  const enabled = $('sta-enabled').checked;
   const ssid = $('sta-ssid').value;
-  const psk = $('sta-psk').value;
-  const ssidError = staSsidError(new TextEncoder().encode(ssid).length);
-  const pskError = staPskError(psk.length);
+  const pskClear = $('sta-psk-clear').checked;
+  const psk = pskClear ? '' : $('sta-psk').value;
+  const body = staBody({ enabled, ssid, psk, pskClear, rotateMac: $('sta-rotate-mac').checked });
+  const ssidError = 'sta_ssid' in body ? staSsidError(new TextEncoder().encode(ssid).length) : '';
+  const pskError = staPskError(new TextEncoder().encode(psk).length);
 
   setFieldError('sta-ssid-error', ssidError);
   setFieldError('sta-psk-error', pskError);
@@ -256,18 +292,12 @@ async function handleStaSubmit(event) {
   updateConfigControls();
   setStaMessage('Saving…', 'warn');
 
-  const body = {
-    sta_enabled: $('sta-enabled').checked,
-    sta_ssid: ssid,
-    sta_rotate_mac: $('sta-rotate-mac').checked,
-  };
-  if (psk !== '') body.sta_psk = psk;
-
   try {
     const payload = await postConfig(body, (errors) => {
       if (errors.sta_ssid) setFieldError('sta-ssid-error', `SSID ${errors.sta_ssid}.`);
       if (errors.sta_psk) setFieldError('sta-psk-error', `Password ${errors.sta_psk}.`);
-    });
+      if (errors.sta_psk_clear) setFieldError('sta-psk-error', `Password ${errors.sta_psk_clear}.`);
+    }, renderStaConfig);
     setStaMessage(payload.reboot_required
       ? 'Saved. Reboot the bridge to apply the new Wi-Fi settings.'
       : 'Saved.', 'ok');
@@ -287,6 +317,9 @@ async function handleReboot() {
     const r = await fetch('/api/reboot', { method: 'POST' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     configRebootExpectedUntil = Date.now() + 60000;
+    // Successful polls after this grace period mean the device is back up,
+    // even if the reboot happened entirely between two polls.
+    rebootGraceUntil = Date.now() + 5000;
     setStaMessage('Rebooting. This page reconnects automatically.', 'warn');
   } catch (error) {
     rebootInProgress = false;
@@ -300,6 +333,8 @@ function wireConfigUi() {
   if (form) form.addEventListener('submit', handleConfigSubmit);
   const staForm = $('sta-config-form');
   if (staForm) staForm.addEventListener('submit', handleStaSubmit);
+  const pskClear = $('sta-psk-clear');
+  if (pskClear) pskClear.addEventListener('change', updateConfigControls);
   const reboot = $('reboot-button');
   if (reboot) reboot.addEventListener('click', handleReboot);
   updateConfigControls();
@@ -395,14 +430,14 @@ function setOffline(error) {
 
 function clearOffline() {
   const wasOffline = statusOffline;
+  const rebootOver = rebootInProgress && Date.now() > rebootGraceUntil;
   statusOffline = false;
   const notice = $('offline-notice');
   if (notice) notice.hidden = true;
-  if (wasOffline) {
+  if (wasOffline || rebootOver) {
     // Back after a reboot or outage: re-fetch config so the
     // reboot-required banner reflects the device's fresh state.
-    configRebootExpectedUntil = 0;
-    rebootInProgress = false;
+    rebootStateCleared();
     loadConfig();
   }
 }

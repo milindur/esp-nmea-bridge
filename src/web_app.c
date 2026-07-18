@@ -356,6 +356,7 @@ struct config_payload {
 	bool sta_enabled;
 	char sta_ssid[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 2U];
 	char sta_psk[BRIDGE_CONFIG_WIFI_PSK_MAX * 2U + 2U];
+	bool sta_psk_clear;
 	bool sta_rotate_mac;
 };
 
@@ -365,6 +366,7 @@ static const struct json_obj_descr config_payload_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_enabled, JSON_TOK_TRUE),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_ssid, JSON_TOK_STRING_BUF),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_psk, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_psk_clear, JSON_TOK_TRUE),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_rotate_mac, JSON_TOK_TRUE),
 };
 
@@ -373,10 +375,54 @@ static const struct json_obj_descr config_payload_descr[] = {
 #define CONFIG_FIELD_STA_ENABLED BIT(2)
 #define CONFIG_FIELD_STA_SSID BIT(3)
 #define CONFIG_FIELD_STA_PSK BIT(4)
-#define CONFIG_FIELD_STA_ROTATE_MAC BIT(5)
+#define CONFIG_FIELD_STA_PSK_CLEAR BIT(5)
+#define CONFIG_FIELD_STA_ROTATE_MAC BIT(6)
 #define CONFIG_FIELDS_AIS (CONFIG_FIELD_AIS_FILTER_ENABLED | CONFIG_FIELD_AIS_OWN_MMSI)
 #define CONFIG_FIELDS_STA (CONFIG_FIELD_STA_ENABLED | CONFIG_FIELD_STA_SSID | \
-			   CONFIG_FIELD_STA_PSK | CONFIG_FIELD_STA_ROTATE_MAC)
+			   CONFIG_FIELD_STA_PSK | CONFIG_FIELD_STA_PSK_CLEAR | \
+			   CONFIG_FIELD_STA_ROTATE_MAC)
+
+/*
+ * Strict UTF-8 check (rejects overlongs, surrogates, > U+10FFFF): a stored
+ * non-UTF-8 SSID would make every /api/config response unparseable JSON in
+ * the browser.
+ */
+static bool utf8_valid(const char *s)
+{
+	const uint8_t *p = (const uint8_t *)s;
+
+	while (*p != 0U) {
+		uint8_t lead = *p;
+		size_t cont;
+
+		if (lead < 0x80U) {
+			cont = 0U;
+		} else if ((lead & 0xE0U) == 0xC0U && lead >= 0xC2U) {
+			cont = 1U;
+		} else if ((lead & 0xF0U) == 0xE0U) {
+			if ((lead == 0xE0U && (p[1] & 0xE0U) == 0x80U) ||
+			    (lead == 0xEDU && (p[1] & 0xE0U) == 0xA0U)) {
+				return false;
+			}
+			cont = 2U;
+		} else if ((lead & 0xF8U) == 0xF0U && lead <= 0xF4U) {
+			if ((lead == 0xF0U && (p[1] & 0xF0U) == 0x80U) ||
+			    (lead == 0xF4U && p[1] > 0x8FU)) {
+				return false;
+			}
+			cont = 3U;
+		} else {
+			return false;
+		}
+		p++;
+		for (; cont > 0U; cont--, p++) {
+			if ((*p & 0xC0U) != 0x80U) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
 
 static int write_config_json(int fd, const char *status)
 {
@@ -787,6 +833,11 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 						       "must be 1 to 32 bytes");
 			return;
 		}
+		if (!utf8_valid(payload.sta_ssid)) {
+			(void)write_config_field_error(fd, "sta_ssid",
+						       "must be valid UTF-8");
+			return;
+		}
 	}
 	if ((fields & CONFIG_FIELD_STA_PSK) != 0) {
 		size_t psk_len = strlen(payload.sta_psk);
@@ -796,6 +847,38 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 				      psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX)) {
 			(void)write_config_field_error(fd, "sta_psk",
 						       "must be 8 to 63 characters or blank");
+			return;
+		}
+	}
+	if ((fields & CONFIG_FIELD_STA_PSK_CLEAR) != 0 && payload.sta_psk_clear &&
+	    (fields & CONFIG_FIELD_STA_PSK) != 0 && payload.sta_psk[0] != '\0') {
+		(void)write_config_field_error(fd, "sta_psk_clear",
+					       "cannot be combined with a new password");
+		return;
+	}
+
+	/* Merge the STA update before any save so the result can be validated. */
+	if ((fields & CONFIG_FIELDS_STA) != 0) {
+		bridge_config_get_sta(&sta);
+		if ((fields & CONFIG_FIELD_STA_ENABLED) != 0) {
+			sta.enabled = payload.sta_enabled;
+		}
+		if ((fields & CONFIG_FIELD_STA_ROTATE_MAC) != 0) {
+			sta.rotate_mac = payload.sta_rotate_mac;
+		}
+		if ((fields & CONFIG_FIELD_STA_SSID) != 0) {
+			strcpy(sta.ssid, payload.sta_ssid);
+		}
+		if ((fields & CONFIG_FIELD_STA_PSK_CLEAR) != 0 && payload.sta_psk_clear) {
+			sta.psk[0] = '\0';
+		} else if ((fields & CONFIG_FIELD_STA_PSK) != 0 && payload.sta_psk[0] != '\0') {
+			strcpy(sta.psk, payload.sta_psk);
+		}
+		/* Enabling the station without any SSID would silently never connect. */
+		if ((fields & CONFIG_FIELD_STA_ENABLED) != 0 && payload.sta_enabled &&
+		    sta.ssid[0] == '\0') {
+			(void)write_config_field_error(fd, "sta_ssid",
+						       "required when enabling station mode");
 			return;
 		}
 	}
@@ -810,30 +893,15 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 		}
 		if (bridge_config_set_ais(&ais) != 0) {
 			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
-						  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
+						  "{\"ok\":false,\"errors\":{\"body\":\"saving AIS configuration failed\"}}\n");
 			return;
 		}
 	}
 
-	if ((fields & CONFIG_FIELDS_STA) != 0) {
-		bridge_config_get_sta(&sta);
-		if ((fields & CONFIG_FIELD_STA_ENABLED) != 0) {
-			sta.enabled = payload.sta_enabled;
-		}
-		if ((fields & CONFIG_FIELD_STA_ROTATE_MAC) != 0) {
-			sta.rotate_mac = payload.sta_rotate_mac;
-		}
-		if ((fields & CONFIG_FIELD_STA_SSID) != 0) {
-			strcpy(sta.ssid, payload.sta_ssid);
-		}
-		if ((fields & CONFIG_FIELD_STA_PSK) != 0 && payload.sta_psk[0] != '\0') {
-			strcpy(sta.psk, payload.sta_psk);
-		}
-		if (bridge_config_set_sta(&sta) != 0) {
-			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
-						  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
-			return;
-		}
+	if ((fields & CONFIG_FIELDS_STA) != 0 && bridge_config_set_sta(&sta) != 0) {
+		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"saving WiFi configuration failed\"}}\n");
+		return;
 	}
 
 	(void)write_config_json(fd, "200 OK");

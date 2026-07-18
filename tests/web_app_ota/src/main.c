@@ -647,7 +647,7 @@ ZTEST(web_app_config_api, test_post_save_failure_reports_500)
 	web_app_test_handle_client(1);
 
 	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
-	zassert_true(response_contains("saving configuration failed"));
+	zassert_true(response_contains("saving AIS configuration failed"));
 }
 
 static char config_post_buf[512];
@@ -813,7 +813,75 @@ ZTEST(web_app_config_api, test_post_sta_save_failure_reports_500)
 	web_app_test_handle_client(1);
 
 	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
-	zassert_true(response_contains("saving configuration failed"));
+	zassert_true(response_contains("saving WiFi configuration failed"));
+}
+
+ZTEST(web_app_config_api, test_post_psk_clear_removes_stored_psk)
+{
+	reset_harness();
+	set_config_post("{\"sta_psk_clear\":true}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(sta_set_count, 1);
+	zassert_str_equal(last_set_sta.psk, "");
+	zassert_true(response_contains("\"sta_psk_set\":false"));
+}
+
+ZTEST(web_app_config_api, test_post_psk_clear_with_new_psk_rejected)
+{
+	reset_harness();
+	set_config_post("{\"sta_psk_clear\":true,\"sta_psk\":\"newharbour1\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"sta_psk_clear\":"));
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_enable_sta_with_empty_effective_ssid_rejected)
+{
+	reset_harness();
+	fake_sta.enabled = false;
+	fake_sta.ssid[0] = '\0';
+	set_config_post("{\"sta_enabled\":true}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("required when enabling station mode"));
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_rotate_mac_with_empty_ssid_still_saves)
+{
+	reset_harness();
+	fake_sta.ssid[0] = '\0';
+	set_config_post("{\"sta_rotate_mac\":false}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(sta_set_count, 1);
+	zassert_false(last_set_sta.rotate_mac);
+}
+
+ZTEST(web_app_config_api, test_post_non_utf8_ssid_rejected)
+{
+	reset_harness();
+	/* Raw 0xFF byte in the SSID; header built manually because the
+	 * formatted %s path is not byte-transparent for non-ASCII input.
+	 */
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 23\r\n\r\n"
+		    "{\"sta_ssid\":\"Boat\xFFNet\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("must be valid UTF-8"));
+	zassert_equal(sta_set_count, 0);
 }
 
 ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);

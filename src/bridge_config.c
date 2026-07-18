@@ -71,7 +71,9 @@ static bool sta_record_unpack(const uint8_t record[STA_RECORD_LEN], struct bridg
 	uint8_t ssid_len = record[2];
 	uint8_t psk_len = record[STA_RECORD_PSK_LEN_OFF];
 
-	if (ssid_len > BRIDGE_CONFIG_WIFI_SSID_MAX || psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX) {
+	if (ssid_len > BRIDGE_CONFIG_WIFI_SSID_MAX ||
+	    (psk_len != 0U && (psk_len < BRIDGE_CONFIG_WIFI_PSK_MIN ||
+			       psk_len > BRIDGE_CONFIG_WIFI_PSK_MAX))) {
 		return false;
 	}
 
@@ -225,7 +227,12 @@ int bridge_config_set_sta(const struct bridge_config_sta *next)
 
 bool bridge_config_reboot_required(void)
 {
-	return reboot_required;
+	bool required;
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	required = reboot_required;
+	k_mutex_unlock(&config_lock);
+	return required;
 }
 
 void bridge_config_set_listener(bridge_config_listener_t new_listener)

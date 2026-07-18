@@ -36,6 +36,20 @@ function staPskPlaceholder(staPskStored) {
   return staPskStored ? 'Leave blank to keep the stored password' : 'No password stored (open network)';
 }
 
+function staBody({ enabled, ssid, psk, pskClear, rotateMac }) {
+  const body = { sta_enabled: enabled, sta_rotate_mac: rotateMac };
+  if (ssid !== '' || enabled) body.sta_ssid = ssid;
+  if (pskClear) body.sta_psk_clear = true;
+  else if (psk !== '') body.sta_psk = psk;
+  return body;
+}
+
+function rebootCleared({ rebootInProgress, rebootGraceUntil, statusOffline, now }) {
+  // Mirrors clearOffline(): a successful poll clears reboot state once the
+  // grace period passed, or after any observed offline phase.
+  return statusOffline || (rebootInProgress && now > rebootGraceUntil);
+}
+
 function resolveTheme(stored, osPrefersDark) {
   return stored === 'light' || stored === 'dark' ? stored : (osPrefersDark ? 'dark' : 'light');
 }
@@ -92,6 +106,19 @@ assert.equal(staPskError(63), '');
 assert.equal(staPskError(64), 'Enter a password of 8 to 63 characters, or leave blank to keep the stored one.');
 assert.match(staPskPlaceholder(true), /keep the stored password/);
 assert.match(staPskPlaceholder(false), /open network/);
+assert.deepEqual(staBody({ enabled: false, ssid: '', psk: '', pskClear: false, rotateMac: true }),
+  { sta_enabled: false, sta_rotate_mac: true });
+assert.deepEqual(staBody({ enabled: true, ssid: 'Marina', psk: '', pskClear: false, rotateMac: false }),
+  { sta_enabled: true, sta_rotate_mac: false, sta_ssid: 'Marina' });
+assert.deepEqual(staBody({ enabled: true, ssid: 'Marina', psk: 'harbour99', pskClear: false, rotateMac: false }),
+  { sta_enabled: true, sta_rotate_mac: false, sta_ssid: 'Marina', sta_psk: 'harbour99' });
+assert.deepEqual(staBody({ enabled: true, ssid: 'Marina', psk: 'ignored99', pskClear: true, rotateMac: false }),
+  { sta_enabled: true, sta_rotate_mac: false, sta_ssid: 'Marina', sta_psk_clear: true });
+assert.equal('sta_ssid' in staBody({ enabled: true, ssid: '', psk: '', pskClear: false, rotateMac: true }), true);
+assert.equal(rebootCleared({ rebootInProgress: true, rebootGraceUntil: now + 5_000, statusOffline: false, now }), false);
+assert.equal(rebootCleared({ rebootInProgress: true, rebootGraceUntil: now - 1, statusOffline: false, now }), true);
+assert.equal(rebootCleared({ rebootInProgress: false, rebootGraceUntil: 0, statusOffline: true, now }), true);
+assert.equal(rebootCleared({ rebootInProgress: false, rebootGraceUntil: 0, statusOffline: false, now }), false);
 assert.equal(resolveTheme(null, true), 'dark');
 assert.equal(resolveTheme(null, false), 'light');
 assert.equal(resolveTheme('light', true), 'light');

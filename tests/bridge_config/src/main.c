@@ -321,6 +321,11 @@ ZTEST(bridge_config, test_malformed_stored_sta_keeps_defaults)
 						      stored_read_cb, record), 0);
 
 	make_sta_record(true, true, "Marina", "harbour99", record);
+	record[35] = 3U; /* psk_len below the WPA2 minimum */
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_sta_record(true, true, "Marina", "harbour99", record);
 	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
 						      failing_read_cb, record), 0);
 
