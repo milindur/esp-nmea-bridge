@@ -44,6 +44,7 @@ static void bridge_config_changed(void)
 
 	bridge_config_get_ais(&ais);
 	uart_nmea_set_ais_config(ais.filter_enabled, ais.own_mmsi);
+	tcp_nmea_client_config_changed();
 }
 
 int main(void)

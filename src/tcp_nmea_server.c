@@ -42,7 +42,6 @@ static void peer_thread(void *a, void *b, void *c)
 	ARG_UNUSED(c);
 
 	(void)tcp_nmea_session_run(peer->fd, "tcp-server-peer");
-	peer->fd = -1;
 
 	close_peer(peer);
 	LOG_INF("TCP peer disconnected");

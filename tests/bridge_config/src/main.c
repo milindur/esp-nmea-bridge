@@ -422,6 +422,182 @@ ZTEST(bridge_config, test_set_sta_does_not_notify_live_listener)
 	zassert_equal(listener_count, 0);
 }
 
+/* Mirrors the packed layout in bridge_config.c: enabled, host_len, host, port. */
+#define TCP_RECORD_LEN 19U
+
+static void make_tcp_record(bool enabled, const char *host, uint16_t port,
+			    uint8_t record[TCP_RECORD_LEN])
+{
+	memset(record, 0, TCP_RECORD_LEN);
+	record[0] = enabled ? 1U : 0U;
+	record[1] = (uint8_t)strlen(host);
+	memcpy(&record[2], host, strlen(host));
+	memcpy(&record[17], &port, sizeof(port));
+}
+
+static int store_tcp_record(bool enabled, const char *host, uint16_t port)
+{
+	uint8_t record[TCP_RECORD_LEN];
+
+	make_tcp_record(enabled, host, port, record);
+	return bridge_config_test_settings_set("tcp", sizeof(record), stored_read_cb, record);
+}
+
+static void fill_tcp(struct bridge_config_tcp_client *tcp, bool enabled, const char *host,
+		     uint16_t port)
+{
+	memset(tcp, 0, sizeof(*tcp));
+	tcp->enabled = enabled;
+	strcpy(tcp->host, host);
+	tcp->port = port;
+}
+
+ZTEST(bridge_config, test_tcp_defaults_come_from_kconfig)
+{
+	struct bridge_config_tcp_client tcp;
+
+	bridge_config_get_tcp_client(&tcp);
+
+	zassert_true(tcp.enabled);
+	zassert_str_equal(tcp.host, "");
+	zassert_equal(tcp.port, 10110);
+}
+
+ZTEST(bridge_config, test_stored_tcp_overrides_defaults_without_reboot_flag)
+{
+	struct bridge_config_tcp_client tcp;
+
+	zassert_equal(store_tcp_record(false, "192.168.1.50", 2000), 0);
+
+	bridge_config_get_tcp_client(&tcp);
+	zassert_false(tcp.enabled);
+	zassert_str_equal(tcp.host, "192.168.1.50");
+	zassert_equal(tcp.port, 2000);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_malformed_stored_tcp_keeps_defaults)
+{
+	struct bridge_config_tcp_client tcp;
+	uint8_t record[TCP_RECORD_LEN];
+	uint8_t short_value = 1U;
+
+	zassert_equal(bridge_config_test_settings_set("tcp", sizeof(short_value),
+						      stored_read_cb, &short_value), 0);
+
+	make_tcp_record(true, "192.168.1.50", 2000, record);
+	record[1] = 16U; /* host_len out of range */
+	zassert_equal(bridge_config_test_settings_set("tcp", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_tcp_record(true, "192.168.1.50", 0, record); /* port 0 invalid */
+	zassert_equal(bridge_config_test_settings_set("tcp", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_tcp_record(true, "not-an-ip", 2000, record);
+	zassert_equal(bridge_config_test_settings_set("tcp", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	make_tcp_record(true, "192.168.1.50", 2000, record);
+	zassert_equal(bridge_config_test_settings_set("tcp", sizeof(record),
+						      failing_read_cb, record), 0);
+
+	bridge_config_get_tcp_client(&tcp);
+	zassert_true(tcp.enabled);
+	zassert_str_equal(tcp.host, "");
+	zassert_equal(tcp.port, 10110);
+}
+
+ZTEST(bridge_config, test_set_tcp_persists_record_and_notifies_listener)
+{
+	struct bridge_config_tcp_client next;
+	struct bridge_config_tcp_client tcp;
+	uint8_t expected[TCP_RECORD_LEN];
+
+	bridge_config_set_listener(count_listener);
+	fill_tcp(&next, false, "10.0.0.2", 2000);
+	zassert_equal(bridge_config_set_tcp_client(&next), 0);
+
+	make_tcp_record(false, "10.0.0.2", 2000, expected);
+	zassert_equal(save_count, 1);
+	zassert_str_equal(saved[0].name, "bridge/tcp");
+	zassert_equal(saved[0].len, sizeof(expected));
+	zassert_mem_equal(saved[0].value, expected, sizeof(expected));
+	zassert_equal(listener_count, 1);
+	zassert_false(bridge_config_reboot_required());
+
+	bridge_config_get_tcp_client(&tcp);
+	zassert_false(tcp.enabled);
+	zassert_str_equal(tcp.host, "10.0.0.2");
+	zassert_equal(tcp.port, 2000);
+}
+
+ZTEST(bridge_config, test_set_tcp_accepts_empty_host_meaning_gateway)
+{
+	struct bridge_config_tcp_client next;
+
+	fill_tcp(&next, true, "", 4000);
+	zassert_equal(bridge_config_set_tcp_client(&next), 0);
+	zassert_equal(save_count, 1);
+}
+
+ZTEST(bridge_config, test_set_tcp_rejects_invalid_fields_without_saving)
+{
+	static const char *const bad_hosts[] = {
+		"not-an-ip", "1.2.3", "1.2.3.4.5", "256.1.1.1", "1.2.3.4 ", "1..2.3", "1.2.3.",
+	};
+	struct bridge_config_tcp_client next;
+	struct bridge_config_tcp_client tcp;
+
+	for (size_t i = 0; i < ARRAY_SIZE(bad_hosts); i++) {
+		fill_tcp(&next, true, bad_hosts[i], 2000);
+		zassert_equal(bridge_config_set_tcp_client(&next), -EINVAL,
+			      "host %s must be rejected", bad_hosts[i]);
+	}
+
+	fill_tcp(&next, true, "10.0.0.2", 0); /* port 0 */
+	zassert_equal(bridge_config_set_tcp_client(&next), -EINVAL);
+
+	/* Unterminated host array */
+	fill_tcp(&next, true, "", 2000);
+	memset(next.host, '1', sizeof(next.host));
+	zassert_equal(bridge_config_set_tcp_client(&next), -EINVAL);
+
+	zassert_equal(save_count, 0);
+	bridge_config_get_tcp_client(&tcp);
+	zassert_str_equal(tcp.host, "");
+	zassert_equal(tcp.port, 10110);
+}
+
+ZTEST(bridge_config, test_set_tcp_unchanged_is_a_no_op)
+{
+	struct bridge_config_tcp_client next;
+
+	bridge_config_set_listener(count_listener);
+	fill_tcp(&next, true, "", 10110);
+	zassert_equal(bridge_config_set_tcp_client(&next), 0);
+	zassert_equal(save_count, 0);
+	zassert_equal(listener_count, 0);
+}
+
+ZTEST(bridge_config, test_set_tcp_save_failure_keeps_previous_config)
+{
+	struct bridge_config_tcp_client next;
+	struct bridge_config_tcp_client tcp;
+
+	save_ret = -EIO;
+	bridge_config_set_listener(count_listener);
+	fill_tcp(&next, false, "10.0.0.2", 2000);
+
+	zassert_equal(bridge_config_set_tcp_client(&next), -EIO);
+	zassert_equal(listener_count, 0);
+
+	bridge_config_get_tcp_client(&tcp);
+	zassert_true(tcp.enabled);
+	zassert_str_equal(tcp.host, "");
+	zassert_equal(tcp.port, 10110);
+}
+
 ZTEST(bridge_config, test_ais_change_does_not_require_reboot)
 {
 	struct bridge_config_ais next = {

@@ -14,6 +14,7 @@ struct tcp_nmea_session_stats {
 	uint32_t active_sessions;
 };
 
+/* Runs until the session ends. The caller keeps ownership of fd and closes it. */
 enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name);
 void tcp_nmea_session_get_stats(struct tcp_nmea_session_stats *stats);
 

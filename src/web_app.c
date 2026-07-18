@@ -358,6 +358,9 @@ struct config_payload {
 	char sta_psk[BRIDGE_CONFIG_WIFI_PSK_MAX * 2U + 2U];
 	bool sta_psk_clear;
 	bool sta_rotate_mac;
+	bool tcp_client_enabled;
+	char tcp_client_host[BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX * 2U + 2U];
+	int32_t tcp_client_port;
 };
 
 static const struct json_obj_descr config_payload_descr[] = {
@@ -368,6 +371,9 @@ static const struct json_obj_descr config_payload_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_psk, JSON_TOK_STRING_BUF),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_psk_clear, JSON_TOK_TRUE),
 	JSON_OBJ_DESCR_PRIM(struct config_payload, sta_rotate_mac, JSON_TOK_TRUE),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_enabled, JSON_TOK_TRUE),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_host, JSON_TOK_STRING_BUF),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, tcp_client_port, JSON_TOK_NUMBER),
 };
 
 #define CONFIG_FIELD_AIS_FILTER_ENABLED BIT(0)
@@ -377,10 +383,15 @@ static const struct json_obj_descr config_payload_descr[] = {
 #define CONFIG_FIELD_STA_PSK BIT(4)
 #define CONFIG_FIELD_STA_PSK_CLEAR BIT(5)
 #define CONFIG_FIELD_STA_ROTATE_MAC BIT(6)
+#define CONFIG_FIELD_TCP_CLIENT_ENABLED BIT(7)
+#define CONFIG_FIELD_TCP_CLIENT_HOST BIT(8)
+#define CONFIG_FIELD_TCP_CLIENT_PORT BIT(9)
 #define CONFIG_FIELDS_AIS (CONFIG_FIELD_AIS_FILTER_ENABLED | CONFIG_FIELD_AIS_OWN_MMSI)
 #define CONFIG_FIELDS_STA (CONFIG_FIELD_STA_ENABLED | CONFIG_FIELD_STA_SSID | \
 			   CONFIG_FIELD_STA_PSK | CONFIG_FIELD_STA_PSK_CLEAR | \
 			   CONFIG_FIELD_STA_ROTATE_MAC)
+#define CONFIG_FIELDS_TCP (CONFIG_FIELD_TCP_CLIENT_ENABLED | CONFIG_FIELD_TCP_CLIENT_HOST | \
+			   CONFIG_FIELD_TCP_CLIENT_PORT)
 
 /*
  * Strict UTF-8 check (rejects overlongs, surrogates, > U+10FFFF): a stored
@@ -428,21 +439,26 @@ static int write_config_json(int fd, const char *status)
 {
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
+	struct bridge_config_tcp_client tcp;
 	char ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
-	char body[320];
+	char body[448];
 
 	bridge_config_get_ais(&ais);
 	bridge_config_get_sta(&sta);
+	bridge_config_get_tcp_client(&tcp);
 	json_escape_string(sta.ssid, ssid_json, sizeof(ssid_json));
 	/* PSKs are write-only through the API; only expose whether one is stored. */
 	(void)snprintk(body, sizeof(body),
 		       "{\"ais_filter_enabled\":%s,\"ais_own_mmsi\":%u,"
 		       "\"sta_enabled\":%s,\"sta_ssid\":\"%s\",\"sta_psk_set\":%s,"
-		       "\"sta_rotate_mac\":%s,\"reboot_required\":%s}",
+		       "\"sta_rotate_mac\":%s,"
+		       "\"tcp_client_enabled\":%s,\"tcp_client_host\":\"%s\","
+		       "\"tcp_client_port\":%u,\"reboot_required\":%s}",
 		       ais.filter_enabled ? "true" : "false", ais.own_mmsi,
 		       sta.enabled ? "true" : "false", ssid_json,
 		       sta.psk[0] != '\0' ? "true" : "false",
 		       sta.rotate_mac ? "true" : "false",
+		       tcp.enabled ? "true" : "false", tcp.host, tcp.port,
 		       bridge_config_reboot_required() ? "true" : "false");
 	return write_text_response(fd, status, "application/json", body);
 }
@@ -785,6 +801,7 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	struct config_payload payload;
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
+	struct bridge_config_tcp_client tcp;
 	int fields;
 
 	if (!parsed->has_content_length) {
@@ -856,6 +873,19 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 					       "cannot be combined with a new password");
 		return;
 	}
+	if ((fields & CONFIG_FIELD_TCP_CLIENT_HOST) != 0 &&
+	    (strlen(payload.tcp_client_host) > BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX ||
+	     !bridge_config_tcp_client_host_valid(payload.tcp_client_host))) {
+		(void)write_config_field_error(fd, "tcp_client_host",
+					       "must be an IPv4 address or blank");
+		return;
+	}
+	if ((fields & CONFIG_FIELD_TCP_CLIENT_PORT) != 0 &&
+	    (payload.tcp_client_port < 1 || payload.tcp_client_port > 65535)) {
+		(void)write_config_field_error(fd, "tcp_client_port",
+					       "must be between 1 and 65535");
+		return;
+	}
 
 	/* Merge the STA update before any save so the result can be validated. */
 	if ((fields & CONFIG_FIELDS_STA) != 0) {
@@ -894,6 +924,24 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 		if (bridge_config_set_ais(&ais) != 0) {
 			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
 						  "{\"ok\":false,\"errors\":{\"body\":\"saving AIS configuration failed\"}}\n");
+			return;
+		}
+	}
+
+	if ((fields & CONFIG_FIELDS_TCP) != 0) {
+		bridge_config_get_tcp_client(&tcp);
+		if ((fields & CONFIG_FIELD_TCP_CLIENT_ENABLED) != 0) {
+			tcp.enabled = payload.tcp_client_enabled;
+		}
+		if ((fields & CONFIG_FIELD_TCP_CLIENT_HOST) != 0) {
+			strcpy(tcp.host, payload.tcp_client_host);
+		}
+		if ((fields & CONFIG_FIELD_TCP_CLIENT_PORT) != 0) {
+			tcp.port = (uint16_t)payload.tcp_client_port;
+		}
+		if (bridge_config_set_tcp_client(&tcp) != 0) {
+			(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+						  "{\"ok\":false,\"errors\":{\"body\":\"saving TCP client configuration failed\"}}\n");
 			return;
 		}
 	}

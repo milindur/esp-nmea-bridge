@@ -118,6 +118,7 @@ function rebootStateCleared() {
 
 function setConfigMessage(text, severity) { setFormMessage('ais-config-message', text, severity); }
 function setStaMessage(text, severity) { setFormMessage('sta-config-message', text, severity); }
+function setTcpMessage(text, severity) { setFormMessage('tcp-config-message', text, severity); }
 
 function setFormMessage(id, text, severity) {
   const el = $(id);
@@ -138,13 +139,14 @@ function setConfigFieldError(text) { setFieldError('ais-mmsi-error', text); }
 
 function updateConfigControls() {
   const disabled = !configLoaded || configSaving || rebootInProgress;
-  for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-rotate-mac', 'sta-psk-clear']) {
+  for (const id of ['ais-enabled', 'ais-mmsi', 'sta-enabled', 'sta-ssid', 'sta-rotate-mac', 'sta-psk-clear',
+                    'tcp-enabled', 'tcp-host', 'tcp-port']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
   const psk = $('sta-psk');
   if (psk) psk.disabled = disabled || $('sta-psk-clear').checked;
-  for (const id of ['ais-save', 'sta-save']) {
+  for (const id of ['ais-save', 'sta-save', 'tcp-save']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
@@ -164,7 +166,27 @@ function renderAisConfig(cfg) {
   $('ais-mmsi').value = String(cfg.ais_own_mmsi ?? 0);
 }
 
+/* Latest known enable states, so the soft STA hint stays right when either
+ * card is saved on its own. */
+let staEnabledState = false;
+let tcpEnabledState = false;
+
+function renderTcpStaHint() {
+  const hint = $('tcp-sta-hint');
+  if (hint) hint.hidden = !(tcpEnabledState && !staEnabledState);
+}
+
+function renderTcpConfig(cfg) {
+  tcpEnabledState = Boolean(cfg.tcp_client_enabled);
+  $('tcp-enabled').checked = tcpEnabledState;
+  $('tcp-host').value = String(cfg.tcp_client_host ?? '');
+  $('tcp-port').value = String(cfg.tcp_client_port ?? '');
+  renderTcpStaHint();
+}
+
 function renderStaConfig(cfg) {
+  staEnabledState = Boolean(cfg.sta_enabled);
+  renderTcpStaHint();
   $('sta-enabled').checked = Boolean(cfg.sta_enabled);
   $('sta-ssid').value = String(cfg.sta_ssid ?? '');
   $('sta-rotate-mac').checked = Boolean(cfg.sta_rotate_mac);
@@ -182,6 +204,7 @@ function renderStaConfig(cfg) {
 function renderConfig(cfg) {
   renderAisConfig(cfg);
   renderStaConfig(cfg);
+  renderTcpConfig(cfg);
   renderRebootRequired(Boolean(cfg.reboot_required));
 }
 
@@ -194,11 +217,15 @@ async function loadConfig() {
     setConfigFieldError('');
     setFieldError('sta-ssid-error', '');
     setFieldError('sta-psk-error', '');
+    setFieldError('tcp-host-error', '');
+    setFieldError('tcp-port-error', '');
     setConfigMessage('Changes apply immediately after saving.');
     setStaMessage('Changes take effect after the next reboot.');
+    setTcpMessage('Changes apply immediately after saving.');
   } catch (error) {
     setConfigMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setStaMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
+    setTcpMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
     setTimeout(loadConfig, 5000);
   }
   updateConfigControls();
@@ -308,6 +335,51 @@ async function handleStaSubmit(event) {
   updateConfigControls();
 }
 
+function tcpHostError(host) {
+  if (host === '') return '';
+  const octets = host.split('.');
+  if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o) || Number(o) > 255)) {
+    return 'Enter an IPv4 address, or leave blank to use the Wi-Fi gateway.';
+  }
+  return '';
+}
+
+async function handleTcpSubmit(event) {
+  event.preventDefault();
+  const host = $('tcp-host').value.trim();
+  const portText = $('tcp-port').value.trim();
+  const hostError = tcpHostError(host);
+  const portError = /^\d{1,5}$/.test(portText) && Number(portText) >= 1 && Number(portText) <= 65535
+    ? '' : 'Enter a port between 1 and 65535.';
+
+  setFieldError('tcp-host-error', hostError);
+  setFieldError('tcp-port-error', portError);
+  if (hostError || portError) {
+    setTcpMessage('Not saved.', 'bad');
+    return;
+  }
+
+  configSaving = true;
+  updateConfigControls();
+  setTcpMessage('Saving…', 'warn');
+
+  try {
+    await postConfig({
+      tcp_client_enabled: $('tcp-enabled').checked,
+      tcp_client_host: host,
+      tcp_client_port: Number(portText),
+    }, (errors) => {
+      if (errors.tcp_client_host) setFieldError('tcp-host-error', `Address ${errors.tcp_client_host}.`);
+      if (errors.tcp_client_port) setFieldError('tcp-port-error', `Port ${errors.tcp_client_port}.`);
+    }, renderTcpConfig);
+    setTcpMessage('Saved. The client now uses the new target.', 'ok');
+  } catch (error) {
+    setTcpMessage(`Saving failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
 async function handleReboot() {
   rebootInProgress = true;
   updateConfigControls();
@@ -333,6 +405,18 @@ function wireConfigUi() {
   if (form) form.addEventListener('submit', handleConfigSubmit);
   const staForm = $('sta-config-form');
   if (staForm) staForm.addEventListener('submit', handleStaSubmit);
+  const tcpForm = $('tcp-config-form');
+  if (tcpForm) tcpForm.addEventListener('submit', handleTcpSubmit);
+  const tcpEnabled = $('tcp-enabled');
+  if (tcpEnabled) tcpEnabled.addEventListener('change', () => {
+    tcpEnabledState = tcpEnabled.checked;
+    renderTcpStaHint();
+  });
+  const staEnabled = $('sta-enabled');
+  if (staEnabled) staEnabled.addEventListener('change', () => {
+    staEnabledState = staEnabled.checked;
+    renderTcpStaHint();
+  });
   const pskClear = $('sta-psk-clear');
   if (pskClear) pskClear.addEventListener('change', updateConfigControls);
   const reboot = $('reboot-button');

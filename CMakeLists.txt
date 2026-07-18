@@ -14,6 +14,7 @@ target_sources(app PRIVATE
   src/wifi_manager.c
   src/tcp_nmea_server.c
   src/tcp_nmea_session.c
+  src/tcp_nmea_client.c
 )
 
 configure_file(
@@ -43,10 +44,6 @@ target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE app PRIVATE
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE app PRIVATE
   src/status_led.c
   src/status_led_policy.c
-)
-
-target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE app PRIVATE
-  src/tcp_nmea_client.c
 )
 
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_DNS_SD_ENABLE app PRIVATE

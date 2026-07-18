@@ -1,13 +1,13 @@
 #ifndef TCP_NMEA_CLIENT_H_
 #define TCP_NMEA_CLIENT_H_
 
-#ifdef CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE
 int tcp_nmea_client_start(void);
-#else
-static inline int tcp_nmea_client_start(void)
-{
-	return 0;
-}
-#endif
+
+/*
+ * Live apply for the TCP NMEA client bridge configuration: closes the
+ * current TCP NMEA session (if any) and wakes the reconnect loop so it
+ * picks up the new enable/host/port values immediately.
+ */
+void tcp_nmea_client_config_changed(void);
 
 #endif /* TCP_NMEA_CLIENT_H_ */

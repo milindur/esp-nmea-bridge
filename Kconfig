@@ -22,7 +22,9 @@ config ESP_NMEA_BRIDGE_TCP_NMEA_SERVER_ENABLE
 config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE
 	bool "Enable TCP NMEA client"
 	default y
-	depends on ESP_NMEA_BRIDGE_STA_ENABLE
+	help
+	  Runtime default only: the TCP NMEA client is always built in, and a
+	  stored bridge-configuration override takes precedence.
 
 config ESP_NMEA_BRIDGE_WEB_APP_ENABLE
 	bool "Enable HTTP status web app"
@@ -122,11 +124,21 @@ config ESP_NMEA_BRIDGE_DNS_SD_ENABLE
 config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST
 	string "TCP NMEA server IPv4 address"
 	default ""
-	depends on ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE
 	help
 	  IPv4 address of the upstream TCP NMEA server. Leave empty to use the
 	  DHCP gateway learned on the STA interface, useful when the ESP connects
 	  directly to a Raspberry Pi/OpenPlotter hotspot.
+	  Runtime default; a stored bridge-configuration override wins.
+
+config ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT
+	int "TCP NMEA client target port"
+	default ESP_NMEA_BRIDGE_TCP_NMEA_PORT
+	range 1 65535
+	help
+	  Target port of the upstream TCP NMEA server. Defaults to the shared
+	  TCP NMEA port. Runtime default; a stored bridge-configuration
+	  override wins. The TCP NMEA server listener port stays build-time
+	  only.
 
 config ESP_NMEA_BRIDGE_AP_SSID
 	string "SoftAP SSID"

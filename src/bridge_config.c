@@ -26,6 +26,7 @@ LOG_MODULE_REGISTER(bridge_config, LOG_LEVEL_INF);
 #define BRIDGE_CONFIG_SUBTREE "bridge"
 #define BRIDGE_CONFIG_KEY_AIS "bridge/ais"
 #define BRIDGE_CONFIG_KEY_STA "bridge/sta"
+#define BRIDGE_CONFIG_KEY_TCP "bridge/tcp"
 
 /*
  * Both AIS fields travel in one stored record so a save is atomic at the
@@ -85,6 +86,41 @@ static bool sta_record_unpack(const uint8_t record[STA_RECORD_LEN], struct bridg
 	return true;
 }
 
+/*
+ * All TCP client fields travel in one fixed-size record for the same
+ * atomicity: [0] enabled, [1] host_len, [2..16] host, [17..18] port in
+ * native byte order.
+ */
+#define TCP_RECORD_HOST_OFF 2U
+#define TCP_RECORD_PORT_OFF (TCP_RECORD_HOST_OFF + BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX)
+#define TCP_RECORD_LEN (TCP_RECORD_PORT_OFF + 2U)
+
+static void tcp_record_pack(const struct bridge_config_tcp_client *src,
+			    uint8_t record[TCP_RECORD_LEN])
+{
+	memset(record, 0, TCP_RECORD_LEN);
+	record[0] = src->enabled ? 1U : 0U;
+	record[1] = (uint8_t)strlen(src->host);
+	memcpy(&record[TCP_RECORD_HOST_OFF], src->host, record[1]);
+	memcpy(&record[TCP_RECORD_PORT_OFF], &src->port, sizeof(src->port));
+}
+
+static bool tcp_record_unpack(const uint8_t record[TCP_RECORD_LEN],
+			      struct bridge_config_tcp_client *dst)
+{
+	uint8_t host_len = record[1];
+
+	if (host_len > BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX) {
+		return false;
+	}
+
+	memset(dst, 0, sizeof(*dst));
+	dst->enabled = record[0] != 0U;
+	memcpy(dst->host, &record[TCP_RECORD_HOST_OFF], host_len);
+	memcpy(&dst->port, &record[TCP_RECORD_PORT_OFF], sizeof(dst->port));
+	return bridge_config_tcp_client_host_valid(dst->host) && dst->port != 0U;
+}
+
 static struct bridge_config_ais ais = {
 	.filter_enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE),
 	.own_mmsi = CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI,
@@ -94,6 +130,11 @@ static struct bridge_config_sta sta = {
 	.rotate_mac = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ROTATE_MAC),
 	.ssid = CONFIG_ESP_NMEA_BRIDGE_STA_SSID,
 	.psk = CONFIG_ESP_NMEA_BRIDGE_STA_PSK,
+};
+static struct bridge_config_tcp_client tcp_client = {
+	.enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE),
+	.host = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST,
+	.port = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT,
 };
 static bool reboot_required;
 static K_MUTEX_DEFINE(config_lock);
@@ -117,6 +158,21 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		}
 		k_mutex_lock(&config_lock, K_FOREVER);
 		ais = stored;
+		k_mutex_unlock(&config_lock);
+		return 0;
+	}
+
+	if (strcmp(name, "tcp") == 0) {
+		uint8_t record[TCP_RECORD_LEN];
+		struct bridge_config_tcp_client stored;
+
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		    !tcp_record_unpack(record, &stored)) {
+			LOG_WRN("Ignoring malformed stored %s", name);
+			return 0;
+		}
+		k_mutex_lock(&config_lock, K_FOREVER);
+		tcp_client = stored;
 		k_mutex_unlock(&config_lock);
 		return 0;
 	}
@@ -169,6 +225,54 @@ void bridge_config_get_ais(struct bridge_config_ais *out)
 	k_mutex_lock(&config_lock, K_FOREVER);
 	*out = ais;
 	k_mutex_unlock(&config_lock);
+}
+
+void bridge_config_get_tcp_client(struct bridge_config_tcp_client *out)
+{
+	if (out == NULL) {
+		return;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	*out = tcp_client;
+	k_mutex_unlock(&config_lock);
+}
+
+int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *next)
+{
+	uint8_t record[TCP_RECORD_LEN];
+	bool changed;
+	int ret;
+
+	if (next == NULL || memchr(next->host, '\0', sizeof(next->host)) == NULL ||
+	    !bridge_config_tcp_client_host_valid(next->host) || next->port == 0U) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	changed = tcp_client.enabled != next->enabled || tcp_client.port != next->port ||
+		  strcmp(tcp_client.host, next->host) != 0;
+	k_mutex_unlock(&config_lock);
+
+	if (!changed) {
+		return 0;
+	}
+
+	tcp_record_pack(next, record);
+	ret = cfg_settings_save_one(BRIDGE_CONFIG_KEY_TCP, record, sizeof(record));
+	if (ret != 0) {
+		LOG_ERR("Persisting %s failed: %d", BRIDGE_CONFIG_KEY_TCP, ret);
+		return ret;
+	}
+
+	k_mutex_lock(&config_lock, K_FOREVER);
+	tcp_client = *next;
+	k_mutex_unlock(&config_lock);
+
+	if (listener != NULL) {
+		listener();
+	}
+	return 0;
 }
 
 void bridge_config_get_sta(struct bridge_config_sta *out)
@@ -291,6 +395,10 @@ void bridge_config_test_reset(void)
 	sta.rotate_mac = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_STA_ROTATE_MAC);
 	strcpy(sta.ssid, CONFIG_ESP_NMEA_BRIDGE_STA_SSID);
 	strcpy(sta.psk, CONFIG_ESP_NMEA_BRIDGE_STA_PSK);
+	memset(&tcp_client, 0, sizeof(tcp_client));
+	tcp_client.enabled = IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE);
+	strcpy(tcp_client.host, CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST);
+	tcp_client.port = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT;
 	reboot_required = false;
 	listener = NULL;
 }

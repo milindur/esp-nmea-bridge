@@ -148,6 +148,32 @@
         </form>
       </section>
 
+      <section class="panel" aria-labelledby="tcp-config-title">
+        <header class="panel-header">
+          <h2 id="tcp-config-title">NMEA TCP client</h2>
+        </header>
+        <form id="tcp-config-form" class="config-form" aria-describedby="tcp-config-help">
+          <p id="tcp-config-help" class="config-help">Pulls NMEA frames from a remote TCP source. Changes apply immediately: the current connection is closed and re-established with the new target.</p>
+          <label class="config-check" for="tcp-enabled">
+            <input id="tcp-enabled" type="checkbox">
+            <span>Enable TCP NMEA client</span>
+          </label>
+          <label class="config-field" for="tcp-host">
+            <span class="label">Target IPv4 address</span>
+            <input id="tcp-host" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the Wi-Fi gateway">
+            <span id="tcp-host-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <label class="config-field" for="tcp-port">
+            <span class="label">Target port</span>
+            <input id="tcp-port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false">
+            <span id="tcp-port-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <p id="tcp-sta-hint" class="config-message is-warn" role="status" hidden>Wi-Fi station mode is disabled, so the client has no network to connect through. The setting is stored anyway.</p>
+          <button id="tcp-save" class="button" type="submit" disabled>Save</button>
+          <p id="tcp-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+        </form>
+      </section>
+
       <section class="panel" aria-labelledby="ais-config-title">
         <header class="panel-header">
           <h2 id="ais-config-title">AIS self-MMSI filter</h2>

@@ -85,7 +85,6 @@ enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name)
 
 	if (nmea_bridge_sink_open(&sink, sink_name) != 0) {
 		LOG_ERR("Unable to register TCP NMEA session sink: %s", sink_name ? sink_name : "?");
-		(void)zsock_close(fd);
 		return TCP_NMEA_SESSION_ENDED_SINK_UNAVAILABLE;
 	}
 
@@ -120,7 +119,6 @@ enum tcp_nmea_session_result tcp_nmea_session_run(int fd, const char *sink_name)
 	status_led_tcp_nmea_session_ended();
 	atomic_dec(&active_sessions);
 	nmea_bridge_sink_close(&sink);
-	(void)zsock_close(fd);
 	return result;
 }
 

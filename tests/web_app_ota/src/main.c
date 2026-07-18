@@ -55,6 +55,10 @@ static struct bridge_config_sta fake_sta;
 static struct bridge_config_sta last_set_sta;
 static int sta_set_count;
 static int sta_set_ret;
+static struct bridge_config_tcp_client fake_tcp;
+static struct bridge_config_tcp_client last_set_tcp;
+static int tcp_set_count;
+static int tcp_set_ret;
 static bool fake_reboot_required;
 static int reboot_request_count;
 static bool reboot_after_response;
@@ -92,6 +96,14 @@ static void reset_harness(void)
 	strcpy(fake_sta.psk, "anchor123");
 	sta_set_count = 0;
 	sta_set_ret = 0;
+
+	memset(&fake_tcp, 0, sizeof(fake_tcp));
+	memset(&last_set_tcp, 0, sizeof(last_set_tcp));
+	fake_tcp.enabled = true;
+	strcpy(fake_tcp.host, "192.168.1.50");
+	fake_tcp.port = 10110;
+	tcp_set_count = 0;
+	tcp_set_ret = 0;
 	fake_reboot_required = false;
 	reboot_request_count = 0;
 	reboot_after_response = false;
@@ -239,6 +251,21 @@ int bridge_config_set_sta(const struct bridge_config_sta *sta)
 		fake_reboot_required = true;
 	}
 	return sta_set_ret;
+}
+
+void bridge_config_get_tcp_client(struct bridge_config_tcp_client *out)
+{
+	*out = fake_tcp;
+}
+
+int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *tcp)
+{
+	tcp_set_count++;
+	last_set_tcp = *tcp;
+	if (tcp_set_ret == 0) {
+		fake_tcp = *tcp;
+	}
+	return tcp_set_ret;
 }
 
 bool bridge_config_reboot_required(void)
@@ -882,6 +909,125 @@ ZTEST(web_app_config_api, test_post_non_utf8_ssid_rejected)
 	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
 	zassert_true(response_contains("must be valid UTF-8"));
 	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_get_config_reports_tcp_client)
+{
+	reset_harness();
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_true(response_contains("\"tcp_client_enabled\":true"));
+	zassert_true(response_contains("\"tcp_client_host\":\"192.168.1.50\""));
+	zassert_true(response_contains("\"tcp_client_port\":10110"));
+}
+
+ZTEST(web_app_config_api, test_post_tcp_subset_changes_only_provided_fields)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_port\":2000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(tcp_set_count, 1);
+	zassert_true(last_set_tcp.enabled);
+	zassert_str_equal(last_set_tcp.host, "192.168.1.50");
+	zassert_equal(last_set_tcp.port, 2000);
+	zassert_equal(config_set_count, 0);
+	zassert_equal(sta_set_count, 0);
+	zassert_true(response_contains("\"tcp_client_port\":2000"));
+	zassert_true(response_contains("\"reboot_required\":false"));
+}
+
+ZTEST(web_app_config_api, test_post_blank_tcp_host_means_gateway)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_host\":\"\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(tcp_set_count, 1);
+	zassert_str_equal(last_set_tcp.host, "");
+	zassert_true(response_contains("\"tcp_client_host\":\"\""));
+}
+
+ZTEST(web_app_config_api, test_post_invalid_tcp_host_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_host\":\"nmea.example.org\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"tcp_client_host\":\"must be an IPv4 address or blank\""));
+	zassert_equal(tcp_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_out_of_range_tcp_port_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_port\":65536}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"tcp_client_port\":\"must be between 1 and 65535\""));
+	zassert_equal(tcp_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_zero_tcp_port_rejected_with_field_error)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_port\":0}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(tcp_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_invalid_tcp_field_saves_nothing)
+{
+	reset_harness();
+	set_config_post("{\"ais_own_mmsi\":211000000,\"sta_ssid\":\"Marina\","
+			"\"tcp_client_port\":0}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(tcp_set_count, 0);
+	zassert_equal(config_set_count, 0);
+	zassert_equal(sta_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_tcp_enable_with_sta_disabled_still_saves)
+{
+	reset_harness();
+	fake_sta.enabled = false;
+	set_config_post("{\"tcp_client_enabled\":true}");
+
+	web_app_test_handle_client(1);
+
+	/* Soft dependency: stored anyway, the UI shows a hint. */
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(tcp_set_count, 1);
+	zassert_true(last_set_tcp.enabled);
+}
+
+ZTEST(web_app_config_api, test_post_tcp_save_failure_reports_500)
+{
+	reset_harness();
+	tcp_set_ret = -EIO;
+	set_config_post("{\"tcp_client_port\":2000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("saving TCP client configuration failed"));
 }
 
 ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);
