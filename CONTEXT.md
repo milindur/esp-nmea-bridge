@@ -44,6 +44,14 @@ _Avoid_: packet activity, data event
 Observational status about the ESP NMEA bridge, including counters, NMEA input state, NMEA connection state, and warnings for local display or diagnostics. It is not a control plane; modules that change bridge behaviour should use separate control concepts.
 _Avoid_: status service, control state, management API
 
+**Bridge configuration**:
+The control-plane counterpart to bridge telemetry: the set of runtime-changeable operating parameters, each with a build-time default and an optional persistent override that takes precedence. It changes bridge behaviour; it never reports it.
+_Avoid_: settings service, status, preferences
+
+**Apply scope**:
+The promise a bridge configuration option makes about when a saved change takes effect: *live* (immediately) or *reboot-required* (at next boot).
+_Avoid_: restart flag, dirty state
+
 ## Example dialogue
 
 Dev: "When the TCP NMEA server accepts a peer, should it publish frames directly?"

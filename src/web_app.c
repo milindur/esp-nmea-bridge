@@ -1,5 +1,6 @@
 #include "web_app.h"
 
+#include "bridge_config.h"
 #include "bridge_telemetry.h"
 #include "ota_update.h"
 
@@ -9,6 +10,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <zephyr/data/json.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/socket.h>
@@ -57,6 +59,8 @@ LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 #define WEB_APP_JSON_BUF_SIZE 1536
 #define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
 #define WEB_APP_OTA_RECV_TIMEOUT_MS 5000
+#define WEB_APP_CONFIG_PATH "/api/config"
+#define WEB_APP_CONFIG_BODY_MAX 256
 
 extern const char web_asset_index_html_start[];
 extern const char web_asset_index_html_end[];
@@ -331,6 +335,40 @@ static int write_status_json(int fd)
 	}
 #endif
 	return ret;
+}
+
+struct config_payload {
+	bool ais_filter_enabled;
+	int32_t ais_own_mmsi;
+};
+
+static const struct json_obj_descr config_payload_descr[] = {
+	JSON_OBJ_DESCR_PRIM(struct config_payload, ais_filter_enabled, JSON_TOK_TRUE),
+	JSON_OBJ_DESCR_PRIM(struct config_payload, ais_own_mmsi, JSON_TOK_NUMBER),
+};
+
+#define CONFIG_FIELD_AIS_FILTER_ENABLED BIT(0)
+#define CONFIG_FIELD_AIS_OWN_MMSI BIT(1)
+
+static int write_config_json(int fd, const char *status)
+{
+	struct bridge_config_ais ais;
+	char body[80];
+
+	bridge_config_get_ais(&ais);
+	(void)snprintk(body, sizeof(body),
+		       "{\"ais_filter_enabled\":%s,\"ais_own_mmsi\":%u}",
+		       ais.filter_enabled ? "true" : "false", ais.own_mmsi);
+	return write_text_response(fd, status, "application/json", body);
+}
+
+static int write_config_field_error(int fd, const char *field, const char *message)
+{
+	char body[128];
+
+	(void)snprintk(body, sizeof(body), "{\"ok\":false,\"errors\":{\"%s\":\"%s\"}}\n",
+		       field, message);
+	return write_text_response(fd, "400 Bad Request", "application/json", body);
 }
 
 static const struct web_asset *find_asset(const char *path, size_t path_len)
@@ -631,6 +669,94 @@ static void handle_ota_upload(int fd, const struct http_request *request)
 #endif
 }
 
+static int read_remaining_body(int fd, char *request, size_t request_size,
+			       struct http_request *parsed)
+{
+	size_t body_offset = (size_t)((const char *)parsed->body - request);
+
+	if (parsed->content_length > request_size - body_offset) {
+		return -EOVERFLOW;
+	}
+
+	while (parsed->body_len < parsed->content_length) {
+		ssize_t chunk = web_recv(fd, request + body_offset + parsed->body_len,
+					 parsed->content_length - parsed->body_len, 0);
+
+		if (chunk < 0 && errno == EINTR) {
+			continue;
+		}
+		if (chunk <= 0) {
+			return -ENOTCONN;
+		}
+		parsed->body_len += (size_t)chunk;
+	}
+
+	return 0;
+}
+
+static void handle_config_update(int fd, char *request, size_t request_size,
+				 struct http_request *parsed)
+{
+	struct config_payload payload;
+	struct bridge_config_ais ais;
+	int fields;
+
+	if (!parsed->has_content_length) {
+		(void)write_config_field_error(fd, "body", "Content-Length required");
+		return;
+	}
+	if (parsed->content_length > WEB_APP_CONFIG_BODY_MAX) {
+		(void)write_text_response(fd, "413 Payload Too Large", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"payload too large\"}}\n");
+		return;
+	}
+	if (parsed->body_len > parsed->content_length) {
+		(void)write_config_field_error(fd, "body", "body exceeds Content-Length");
+		return;
+	}
+	if (read_remaining_body(fd, request, request_size, parsed) != 0) {
+		(void)write_config_field_error(fd, "body", "body ended early");
+		return;
+	}
+
+	fields = json_obj_parse((char *)parsed->body, parsed->content_length,
+				config_payload_descr, ARRAY_SIZE(config_payload_descr),
+				&payload);
+	if (fields < 0) {
+		(void)write_config_field_error(fd, "body", "invalid JSON");
+		return;
+	}
+	if (fields == 0) {
+		(void)write_config_field_error(fd, "body", "no recognised configuration fields");
+		return;
+	}
+
+	/* Validate every provided field before changing anything. */
+	if ((fields & CONFIG_FIELD_AIS_OWN_MMSI) != 0 &&
+	    (payload.ais_own_mmsi < 0 ||
+	     (uint32_t)payload.ais_own_mmsi > BRIDGE_CONFIG_AIS_MMSI_MAX)) {
+		(void)write_config_field_error(fd, "ais_own_mmsi",
+					       "must be between 0 and 999999999");
+		return;
+	}
+
+	bridge_config_get_ais(&ais);
+	if ((fields & CONFIG_FIELD_AIS_FILTER_ENABLED) != 0) {
+		ais.filter_enabled = payload.ais_filter_enabled;
+	}
+	if ((fields & CONFIG_FIELD_AIS_OWN_MMSI) != 0) {
+		ais.own_mmsi = (uint32_t)payload.ais_own_mmsi;
+	}
+
+	if (bridge_config_set_ais(&ais) != 0) {
+		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"saving configuration failed\"}}\n");
+		return;
+	}
+
+	(void)write_config_json(fd, "200 OK");
+}
+
 static void handle_client(int fd)
 {
 	char request[WEB_APP_RX_BUF_SIZE];
@@ -648,6 +774,11 @@ static void handle_client(int fd)
 			return;
 		}
 
+		if (token_equals(parsed.path, parsed.path_len, WEB_APP_CONFIG_PATH)) {
+			(void)write_config_json(fd, "200 OK");
+			return;
+		}
+
 		const struct web_asset *asset = find_asset(parsed.path, parsed.path_len);
 
 		if (asset != NULL) {
@@ -657,6 +788,11 @@ static void handle_client(int fd)
 	} else if (token_equals(parsed.method, parsed.method_len, "POST")) {
 		if (token_equals(parsed.path, parsed.path_len, WEB_APP_OTA_UPLOAD_PATH)) {
 			handle_ota_upload(fd, &parsed);
+			return;
+		}
+
+		if (token_equals(parsed.path, parsed.path_len, WEB_APP_CONFIG_PATH)) {
+			handle_config_update(fd, request, sizeof(request), &parsed);
 			return;
 		}
 	} else {

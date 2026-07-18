@@ -7,6 +7,8 @@ project(esp_nmea_bridge)
 
 target_sources(app PRIVATE
   src/main.c
+  src/ais_mmsi_filter.c
+  src/bridge_config.c
   src/nmea_bridge.c
   src/uart_nmea.c
   src/wifi_manager.c
@@ -41,10 +43,6 @@ target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_OTA_UPDATE_ENABLE app PRIVATE
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_STATUS_LED_ENABLE app PRIVATE
   src/status_led.c
   src/status_led_policy.c
-)
-
-target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE app PRIVATE
-  src/ais_mmsi_filter.c
 )
 
 target_sources_ifdef(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_ENABLE app PRIVATE

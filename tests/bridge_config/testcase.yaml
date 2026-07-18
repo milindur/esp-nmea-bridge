@@ -1,0 +1,4 @@
+tests:
+  esp_nmea_bridge.bridge_config:
+    platform_allow: native_sim
+    tags: bridge_config settings

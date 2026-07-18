@@ -1,3 +1,4 @@
+#include "bridge_config.h"
 #include "nmea_bridge.h"
 #include "status_led.h"
 #include "tcp_nmea_server.h"
@@ -37,14 +38,30 @@ static void stats_thread(void *a, void *b, void *c)
 K_THREAD_DEFINE(stats_tid, 2048, stats_thread, NULL, NULL, NULL,
 	       10, 0, 0);
 
+static void bridge_config_changed(void)
+{
+	struct bridge_config_ais ais;
+
+	bridge_config_get_ais(&ais);
+	uart_nmea_set_ais_config(ais.filter_enabled, ais.own_mmsi);
+}
+
 int main(void)
 {
 	LOG_INF("ESP NMEA bridge on %s", CONFIG_BOARD_TARGET);
 
 	nmea_bridge_init();
+
+	int ret = bridge_config_init();
+	if (ret != 0) {
+		LOG_WRN("Bridge config load returned %d; using build-time defaults", ret);
+	}
+	bridge_config_set_listener(bridge_config_changed);
+	bridge_config_changed();
+
 	(void)status_led_start();
 
-	int ret = uart_nmea_start();
+	ret = uart_nmea_start();
 	if (ret != 0) {
 		LOG_ERR("UART NMEA startup failed: %d", ret);
 		return ret;

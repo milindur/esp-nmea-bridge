@@ -34,7 +34,7 @@
     </div>
     <nav class="tabs" role="tablist" aria-label="Sections">
       <button class="tab is-active" type="button" role="tab" id="tab-status" data-view="status" aria-selected="true" aria-controls="view-status">Status</button>
-      <button class="tab" type="button" disabled>Configuration<em class="chip">soon</em></button>
+      <button class="tab" type="button" role="tab" id="tab-config" data-view="config" aria-selected="false" aria-controls="view-config" tabindex="-1">Configuration</button>
       <button class="tab" type="button" role="tab" id="tab-ota" data-view="ota" aria-selected="false" aria-controls="view-ota" tabindex="-1">OTA Update</button>
     </nav>
   </header>
@@ -102,6 +102,28 @@
           <span id="updated" class="meta">Connecting &middot; every 2&thinsp;s</span>
         </header>
         <dl id="details" class="diag-grid"></dl>
+      </section>
+    </section>
+
+    <section id="view-config" role="tabpanel" aria-labelledby="tab-config" hidden>
+      <section class="panel" aria-labelledby="ais-config-title">
+        <header class="panel-header">
+          <h2 id="ais-config-title">AIS self-MMSI filter</h2>
+        </header>
+        <form id="ais-config-form" class="config-form" aria-describedby="ais-config-help">
+          <p id="ais-config-help" class="config-help">Drops AIS position reports of your own vessel before they are forwarded, so chart plotters do not show your boat twice. Changes apply immediately and persist across reboots.</p>
+          <label class="config-check" for="ais-enabled">
+            <input id="ais-enabled" type="checkbox">
+            <span>Enable AIS self-MMSI filter</span>
+          </label>
+          <label class="config-field" for="ais-mmsi">
+            <span class="label">Own MMSI</span>
+            <input id="ais-mmsi" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="0 leaves the filter inactive">
+            <span id="ais-mmsi-error" class="config-error" role="alert" hidden></span>
+          </label>
+          <button id="ais-save" class="button" type="submit" disabled>Save</button>
+          <p id="ais-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+        </form>
       </section>
     </section>
 

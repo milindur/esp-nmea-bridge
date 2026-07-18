@@ -7,11 +7,10 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
-#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
 #include "ais_mmsi_filter.h"
-#endif
 
 LOG_MODULE_REGISTER(uart_nmea, LOG_LEVEL_INF);
 
@@ -26,9 +25,33 @@ static const struct device *const nmea_uart = DEVICE_DT_GET(NMEA_UART_NODE);
 static struct uart_nmea_stats uart_stats;
 static bool started;
 
-#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
+/* Owned by the RX thread; reconfigured between frames via the atomics below. */
 static struct ais_mmsi_filter ais_filter;
-#endif
+static atomic_t ais_cfg_enabled;
+static atomic_t ais_cfg_mmsi;
+static atomic_t ais_cfg_generation;
+
+void uart_nmea_set_ais_config(bool filter_enabled, uint32_t own_mmsi)
+{
+	atomic_set(&ais_cfg_enabled, filter_enabled ? 1 : 0);
+	atomic_set(&ais_cfg_mmsi, (atomic_val_t)own_mmsi);
+	atomic_inc(&ais_cfg_generation);
+}
+
+static void apply_ais_config_if_changed(atomic_val_t *applied_generation)
+{
+	atomic_val_t generation = atomic_get(&ais_cfg_generation);
+
+	if (generation == *applied_generation) {
+		return;
+	}
+	*applied_generation = generation;
+
+	uint32_t mmsi = atomic_get(&ais_cfg_enabled) != 0 ?
+		(uint32_t)atomic_get(&ais_cfg_mmsi) : 0U;
+
+	ais_mmsi_filter_init(&ais_filter, mmsi);
+}
 
 static void uart_rx_thread(void *a, void *b, void *c)
 {
@@ -39,10 +62,13 @@ static void uart_rx_thread(void *a, void *b, void *c)
 	uint8_t frame[CONFIG_ESP_NMEA_BRIDGE_NMEA_FRAME_MAX_LEN];
 	size_t frame_len = 0;
 	bool dropping_overlong = false;
+	atomic_val_t applied_generation = -1;
 
 	for (;;) {
 		unsigned char ch;
 		bool got = false;
+
+		apply_ais_config_if_changed(&applied_generation);
 
 		while (uart_poll_in(nmea_uart, &ch) == 0) {
 			got = true;
@@ -67,13 +93,11 @@ static void uart_rx_thread(void *a, void *b, void *c)
 
 			if (ch == '\n') {
 				uart_stats.frames_rx++;
-#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
 				if (ais_mmsi_filter_should_drop(&ais_filter, frame, frame_len)) {
 					uart_stats.ais_self_mmsi_filtered++;
 					frame_len = 0;
 					continue;
 				}
-#endif
 				if (nmea_bridge_publish_frame(frame, frame_len) == 0) {
 					status_led_nmea_frame_received();
 				}
@@ -98,12 +122,6 @@ int uart_nmea_start(void)
 	}
 
 	if (!started) {
-#if IS_ENABLED(CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE)
-		ais_mmsi_filter_init(&ais_filter, CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI);
-		if (CONFIG_ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI == 0) {
-			LOG_WRN("AIS self-MMSI filter enabled with MMSI=0; filter inactive");
-		}
-#endif
 		started = true;
 		k_thread_create(&uart_nmea_thread, uart_nmea_stack,
 				K_THREAD_STACK_SIZEOF(uart_nmea_stack), uart_rx_thread,

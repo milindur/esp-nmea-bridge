@@ -422,6 +422,63 @@ body {
 .ota-message.is-warn { color: var(--warn); }
 .ota-message.is-bad { color: var(--bad); }
 
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  max-width: 480px;
+}
+
+.config-help,
+.config-message {
+  margin: 0;
+  font: 400 .82rem/1.5 var(--sans);
+  color: var(--text-soft);
+}
+
+.config-message.is-ok { color: var(--ok); }
+.config-message.is-warn { color: var(--warn); }
+.config-message.is-bad { color: var(--bad); }
+
+.config-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font: 500 .9rem/1.4 var(--sans);
+  cursor: pointer;
+}
+
+.config-check input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.config-field input {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: 500 .9rem/1.4 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.config-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.config-field input:disabled { color: var(--text-faint); cursor: not-allowed; }
+
+.config-error {
+  font: 400 .8rem/1.4 var(--sans);
+  color: var(--bad);
+}
+
 .button {
   align-self: flex-start;
   background: var(--accent);

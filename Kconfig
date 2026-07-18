@@ -74,21 +74,22 @@ config ESP_NMEA_BRIDGE_STATUS_LED_ENABLE
 	  non-ready LED hardware is non-fatal.
 
 config ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE
-	bool "Enable AIS self-MMSI filter"
+	bool "AIS self-MMSI filter enabled by default"
 	default n
 	help
-	  Drop AIS VDM NMEA frames whose decoded MMSI matches the configured
-	  own MMSI. Unknown, malformed, checksum-missing, checksum-invalid,
-	  non-VDM, and VDO frames remain pass-through.
+	  Runtime default for the AIS self-MMSI filter, which drops AIS VDM
+	  NMEA frames whose decoded MMSI matches the configured own MMSI.
+	  The filter is always built in; a runtime override stored through
+	  the web app's Configuration tab takes precedence over this default.
 
 config ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_MMSI
-	int "Own MMSI for AIS self-MMSI filter"
+	int "Own MMSI runtime default for AIS self-MMSI filter"
 	default 0
 	range 0 999999999
-	depends on ESP_NMEA_BRIDGE_AIS_SELF_MMSI_FILTER_ENABLE
 	help
-	  Own MMSI to filter. A value of 0 leaves the filter effectively
-	  inactive even when the feature is built in.
+	  Runtime default for the own MMSI to filter. A stored runtime
+	  override takes precedence. A value of 0 leaves the filter
+	  effectively inactive even when it is enabled.
 
 config ESP_NMEA_BRIDGE_MDNS_ENABLE
 	bool "Enable mDNS hostname responder"

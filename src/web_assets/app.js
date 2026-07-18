@@ -101,6 +101,101 @@ function wireTabs() {
   }
 }
 
+/* Configuration */
+
+let configLoaded = false;
+let configSaving = false;
+
+function setConfigMessage(text, severity) {
+  const el = $('ais-config-message');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('is-ok', 'is-warn', 'is-bad');
+  if (severity) el.classList.add(`is-${severity}`);
+}
+
+function setConfigFieldError(text) {
+  const el = $('ais-mmsi-error');
+  if (!el) return;
+  el.textContent = text || '';
+  el.hidden = !text;
+}
+
+function updateConfigControls() {
+  const disabled = !configLoaded || configSaving;
+  for (const id of ['ais-enabled', 'ais-mmsi']) {
+    const el = $(id);
+    if (el) el.disabled = disabled;
+  }
+  const save = $('ais-save');
+  if (save) save.disabled = disabled;
+}
+
+function renderConfig(cfg) {
+  $('ais-enabled').checked = Boolean(cfg.ais_filter_enabled);
+  $('ais-mmsi').value = String(cfg.ais_own_mmsi ?? 0);
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config', { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderConfig(await r.json());
+    configLoaded = true;
+    setConfigFieldError('');
+    setConfigMessage('Changes apply immediately after saving.');
+  } catch (error) {
+    setConfigMessage('Loading configuration failed. Retrying in 5 s.', 'bad');
+    setTimeout(loadConfig, 5000);
+  }
+  updateConfigControls();
+}
+
+async function handleConfigSubmit(event) {
+  event.preventDefault();
+  const mmsiText = $('ais-mmsi').value.trim();
+
+  setConfigFieldError('');
+  if (!/^\d{1,9}$/.test(mmsiText)) {
+    setConfigFieldError('Enter an MMSI between 0 and 999999999.');
+    setConfigMessage('Not saved.', 'bad');
+    return;
+  }
+
+  configSaving = true;
+  updateConfigControls();
+  setConfigMessage('Saving…', 'warn');
+
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ais_filter_enabled: $('ais-enabled').checked,
+        ais_own_mmsi: Number(mmsiText),
+      }),
+    });
+    const payload = await r.json().catch(() => null);
+    if (!r.ok) {
+      const errors = payload && payload.errors ? payload.errors : {};
+      if (errors.ais_own_mmsi) setConfigFieldError(`Own MMSI ${errors.ais_own_mmsi}.`);
+      throw new Error(errors.body || errors.ais_own_mmsi || `HTTP ${r.status}`);
+    }
+    renderConfig(payload || {});
+    setConfigMessage('Saved. The filter now uses the new settings.', 'ok');
+  } catch (error) {
+    setConfigMessage(`Saving failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
+function wireConfigUi() {
+  const form = $('ais-config-form');
+  if (form) form.addEventListener('submit', handleConfigSubmit);
+  updateConfigControls();
+}
+
 /* OTA */
 
 function setOtaMessage(text, severity) {
@@ -408,6 +503,8 @@ function wireOtaUi() {
 
 wireTheme();
 wireTabs();
+wireConfigUi();
 wireOtaUi();
+loadConfig();
 pollStatus();
 setInterval(pollStatus, 2000);

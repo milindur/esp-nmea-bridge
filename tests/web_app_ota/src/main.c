@@ -8,6 +8,7 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/ztest.h>
 
+#include "bridge_config.h"
 #include "bridge_telemetry.h"
 #include "ota_update.h"
 
@@ -46,6 +47,10 @@ static int ota_schedule_count;
 static int ota_self_check_count;
 static int receive_timeout_count;
 static bool schedule_after_success_response;
+static struct bridge_config_ais fake_config;
+static struct bridge_config_ais last_set_config;
+static int config_set_count;
+static int config_set_ret;
 
 static void reset_harness(void)
 {
@@ -64,6 +69,13 @@ static void reset_harness(void)
 	schedule_after_success_response = false;
 	web_app_test_set_ota_upload_disallowed(false);
 	web_app_test_set_json_capacity(0);
+
+	memset(&fake_config, 0, sizeof(fake_config));
+	memset(&last_set_config, 0, sizeof(last_set_config));
+	fake_config.filter_enabled = true;
+	fake_config.own_mmsi = 123456789U;
+	config_set_count = 0;
+	config_set_ret = 0;
 
 	memset(&fake_snapshot, 0, sizeof(fake_snapshot));
 	fake_snapshot.connection_state = BRIDGE_TELEMETRY_NMEA_CONNECTED;
@@ -177,6 +189,21 @@ int web_app_test_zsock_close(int sock_fd)
 void bridge_telemetry_get_snapshot(struct bridge_telemetry_snapshot *snapshot)
 {
 	*snapshot = fake_snapshot;
+}
+
+void bridge_config_get_ais(struct bridge_config_ais *out)
+{
+	*out = fake_config;
+}
+
+int bridge_config_set_ais(const struct bridge_config_ais *ais)
+{
+	config_set_count++;
+	last_set_config = *ais;
+	if (config_set_ret == 0) {
+		fake_config = *ais;
+	}
+	return config_set_ret;
 }
 
 const char *ota_update_state_name(enum ota_update_state state)
@@ -432,3 +459,149 @@ ZTEST(web_app_ota_boundary, test_failed_status_response_does_not_self_check)
 }
 
 ZTEST_SUITE(web_app_ota_boundary, NULL, NULL, NULL, NULL, NULL);
+
+ZTEST(web_app_config_api, test_get_config_returns_effective_values)
+{
+	reset_harness();
+	set_request("GET /api/config HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_true(response_contains("\"ais_filter_enabled\":true"));
+	zassert_true(response_contains("\"ais_own_mmsi\":123456789"));
+}
+
+ZTEST(web_app_config_api, test_post_subset_changes_only_that_field)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 26\r\n\r\n"
+		    "{\"ais_own_mmsi\":211000000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(config_set_count, 1);
+	zassert_true(last_set_config.filter_enabled);
+	zassert_equal(last_set_config.own_mmsi, 211000000U);
+	zassert_true(response_contains("\"ais_own_mmsi\":211000000"));
+	zassert_true(response_contains("\"ais_filter_enabled\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_enable_flag_keeps_mmsi)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 28\r\n\r\n"
+		    "{\"ais_filter_enabled\":false}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(config_set_count, 1);
+	zassert_false(last_set_config.filter_enabled);
+	zassert_equal(last_set_config.own_mmsi, 123456789U);
+}
+
+ZTEST(web_app_config_api, test_post_invalid_mmsi_rejected_with_field_error)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 27\r\n\r\n"
+		    "{\"ais_own_mmsi\":1000000000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"ais_own_mmsi\":\"must be between 0 and 999999999\""));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_negative_mmsi_rejected_with_field_error)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 20\r\n\r\n"
+		    "{\"ais_own_mmsi\":-1}\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_invalid_json_rejected)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 9\r\n\r\nnot json!");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("invalid JSON"));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_unknown_fields_only_rejected)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 14\r\n\r\n"
+		    "{\"other\":true}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_without_content_length_rejected)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\n\r\n{\"ais_own_mmsi\":1}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("Content-Length required"));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_body_split_across_recv_chunks)
+{
+	reset_harness();
+	sock.chunks[0] = (const uint8_t *)"POST /api/config HTTP/1.1\r\nContent-Length: 26\r\n\r\n{\"ais_own_";
+	sock.chunk_lens[0] = strlen((const char *)sock.chunks[0]);
+	sock.chunks[1] = (const uint8_t *)"mmsi\":211000000}";
+	sock.chunk_lens[1] = strlen((const char *)sock.chunks[1]);
+	sock.chunk_count = 2;
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(config_set_count, 1);
+	zassert_equal(last_set_config.own_mmsi, 211000000U);
+}
+
+ZTEST(web_app_config_api, test_post_truncated_body_rejected)
+{
+	reset_harness();
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 26\r\n\r\n{\"ais_own_");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("body ended early"));
+	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_save_failure_reports_500)
+{
+	reset_harness();
+	config_set_ret = -EIO;
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 26\r\n\r\n"
+		    "{\"ais_own_mmsi\":211000000}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("saving configuration failed"));
+}
+
+ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);
