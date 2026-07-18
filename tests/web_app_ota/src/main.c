@@ -13,6 +13,7 @@
 
 void web_app_test_handle_client(int fd);
 void web_app_test_set_ota_upload_disallowed(bool disallowed);
+void web_app_test_set_json_capacity(size_t capacity);
 
 const char web_asset_index_html_start[] = "";
 const char web_asset_index_html_end[] = "";
@@ -33,6 +34,7 @@ struct socket_script {
 };
 
 static struct socket_script sock;
+static struct bridge_telemetry_snapshot fake_snapshot;
 static int ota_begin_ret;
 static int ota_write_ret;
 static int ota_finish_ret;
@@ -61,6 +63,16 @@ static void reset_harness(void)
 	receive_timeout_count = 0;
 	schedule_after_success_response = false;
 	web_app_test_set_ota_upload_disallowed(false);
+	web_app_test_set_json_capacity(0);
+
+	memset(&fake_snapshot, 0, sizeof(fake_snapshot));
+	fake_snapshot.connection_state = BRIDGE_TELEMETRY_NMEA_CONNECTED;
+	fake_snapshot.input_state = BRIDGE_TELEMETRY_NMEA_INPUT_ACTIVE;
+	fake_snapshot.sta_ready = true;
+	strcpy(fake_snapshot.sta_ipv4, "192.168.4.7");
+	fake_snapshot.sta_rssi_valid = true;
+	fake_snapshot.sta_rssi_dbm = -58;
+	fake_snapshot.counters.tcp_server_max_peers = 3;
 }
 
 static void set_request(const char *request)
@@ -164,11 +176,7 @@ int web_app_test_zsock_close(int sock_fd)
 
 void bridge_telemetry_get_snapshot(struct bridge_telemetry_snapshot *snapshot)
 {
-	memset(snapshot, 0, sizeof(*snapshot));
-	snapshot->connection_state = BRIDGE_TELEMETRY_NMEA_CONNECTED;
-	snapshot->input_state = BRIDGE_TELEMETRY_NMEA_INPUT_ACTIVE;
-	snapshot->sta_ready = true;
-	snapshot->counters.tcp_server_max_peers = 3;
+	*snapshot = fake_snapshot;
 }
 
 const char *ota_update_state_name(enum ota_update_state state)
@@ -350,6 +358,44 @@ ZTEST(web_app_ota_boundary, test_status_reports_ota_upload_gate)
 
 	zassert_true(response_contains("\"upload_allowed\":true"));
 	zassert_true(response_contains("\"max_upload_bytes\":1024"));
+}
+
+ZTEST(web_app_ota_boundary, test_status_reports_firmware_and_wifi_details)
+{
+	reset_harness();
+	set_request("GET /api/status HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("\"firmware_version\":\"1.2.3-test\""));
+	zassert_true(response_contains("\"ip\":\"192.168.4.7\""));
+	zassert_true(response_contains("\"rssi\":-58"));
+}
+
+ZTEST(web_app_ota_boundary, test_status_reports_null_wifi_details_when_unavailable)
+{
+	reset_harness();
+	fake_snapshot.sta_ready = false;
+	fake_snapshot.sta_ipv4[0] = '\0';
+	fake_snapshot.sta_rssi_valid = false;
+	set_request("GET /api/status HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("\"ip\":null"));
+	zassert_true(response_contains("\"rssi\":null"));
+}
+
+ZTEST(web_app_ota_boundary, test_status_json_overflow_is_reported_not_truncated)
+{
+	reset_harness();
+	web_app_test_set_json_capacity(64);
+	set_request("GET /api/status HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_equal(ota_self_check_count, 0);
 }
 
 ZTEST(web_app_ota_boundary, test_status_response_is_self_check_boundary)

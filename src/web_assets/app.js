@@ -154,6 +154,7 @@ function setOffline(error) {
     el.querySelector('b').textContent = expectedOtaReboot ? 'REBOOTING' : 'OFFLINE';
   }
 
+  setText('fw-version', '—');
   setText('connection-detail', '—');
   setText('wifi-detail', '—');
   for (const id of counters) setText(id, '—');
@@ -247,9 +248,14 @@ function render(status) {
   setState('input-state', status.input_state, 'active');
   setState('wifi-state', status.wifi.sta_ready ? 'linked' : 'idle', 'linked');
 
-  const sessions = status.tcp.active_sessions ?? 0;
-  setText('connection-detail', `${format(sessions)} TCP session${sessions === 1 ? '' : 's'}`);
-  setText('wifi-detail', status.wifi.sta_ready ? 'IPv4 address assigned' : 'Waiting for IPv4 address');
+  setText('fw-version', status.firmware_version ? `v${status.firmware_version}` : '—');
+
+  const clients = status.tcp.active_sessions ?? 0;
+  setText('connection-detail', `${format(clients)} TCP client${clients === 1 ? '' : 's'}`);
+
+  const wifiIp = status.wifi.ip || '—';
+  const wifiRssi = status.wifi.rssi == null ? '—' : `${String(status.wifi.rssi).replace('-', '−')} dBm`;
+  setText('wifi-detail', status.wifi.sta_ready ? `${wifiIp} · ${wifiRssi}` : '—');
 
   setText('frames', format(status.bridge.frames_in));
   setText('bytes', formatBytes(status.uart.bytes_rx));

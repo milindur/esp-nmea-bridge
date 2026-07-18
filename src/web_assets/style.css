@@ -114,6 +114,8 @@ body {
   letter-spacing: -.01em;
 }
 
+.brand .chip { margin-left: 0; }
+
 .theme-toggle {
   display: grid;
   place-items: center;

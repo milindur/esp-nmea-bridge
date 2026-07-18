@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <zephyr/ztest.h>
 
 #include "bridge_telemetry.h"
@@ -28,6 +30,19 @@ void tcp_nmea_session_get_stats(struct tcp_nmea_session_stats *stats)
 
 bool wifi_manager_sta_ready(void)
 {
+	return false;
+}
+
+bool wifi_manager_get_sta_ipv4(char *buf, size_t buf_len)
+{
+	ARG_UNUSED(buf);
+	ARG_UNUSED(buf_len);
+	return false;
+}
+
+bool wifi_manager_get_sta_rssi(int *rssi_dbm)
+{
+	ARG_UNUSED(rssi_dbm);
 	return false;
 }
 
@@ -139,6 +154,36 @@ ZTEST(bridge_telemetry, test_frame_loss_warning)
 
 	zassert_false(snapshot.warnings.data_quality);
 	zassert_true(snapshot.warnings.frame_loss);
+}
+
+ZTEST(bridge_telemetry, test_snapshot_copies_wifi_details)
+{
+	struct bridge_telemetry_state state = { 0 };
+	struct bridge_telemetry_inputs inputs = base_inputs();
+	struct bridge_telemetry_snapshot snapshot;
+
+	inputs.sta_ready = true;
+	strcpy(inputs.sta_ipv4, "192.168.4.7");
+	inputs.sta_rssi_valid = true;
+	inputs.sta_rssi_dbm = -58;
+	bridge_telemetry_build_snapshot(&state, &inputs, 0, &snapshot);
+
+	zassert_true(snapshot.sta_ready);
+	zassert_equal(strcmp(snapshot.sta_ipv4, "192.168.4.7"), 0);
+	zassert_true(snapshot.sta_rssi_valid);
+	zassert_equal(snapshot.sta_rssi_dbm, -58);
+}
+
+ZTEST(bridge_telemetry, test_snapshot_terminates_unterminated_ipv4)
+{
+	struct bridge_telemetry_state state = { 0 };
+	struct bridge_telemetry_inputs inputs = base_inputs();
+	struct bridge_telemetry_snapshot snapshot;
+
+	memset(inputs.sta_ipv4, 'A', sizeof(inputs.sta_ipv4));
+	bridge_telemetry_build_snapshot(&state, &inputs, 0, &snapshot);
+
+	zassert_equal(snapshot.sta_ipv4[sizeof(snapshot.sta_ipv4) - 1U], '\0');
 }
 
 ZTEST_SUITE(bridge_telemetry, NULL, NULL, NULL, NULL, NULL);

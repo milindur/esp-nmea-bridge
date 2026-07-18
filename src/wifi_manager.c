@@ -487,6 +487,42 @@ bool wifi_manager_sta_ready(void)
 	return sta_connected && sta_has_addr;
 }
 
+bool wifi_manager_get_sta_ipv4(char *buf, size_t buf_len)
+{
+	struct net_in_addr *addr;
+
+	if (buf == NULL || buf_len < NET_IPV4_ADDR_LEN || !wifi_manager_sta_ready()) {
+		return false;
+	}
+
+	addr = sta_dhcp_addr();
+	if (addr == NULL) {
+		return false;
+	}
+
+	return net_addr_ntop(AF_INET, addr, buf, buf_len) != NULL;
+}
+
+bool wifi_manager_get_sta_rssi(int *rssi_dbm)
+{
+	struct wifi_iface_status status = { 0 };
+
+	if (rssi_dbm == NULL || sta_iface == NULL || !sta_connected) {
+		return false;
+	}
+
+	if (net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, sta_iface, &status, sizeof(status)) != 0) {
+		return false;
+	}
+
+	if (status.state != WIFI_STATE_COMPLETED) {
+		return false;
+	}
+
+	*rssi_dbm = status.rssi;
+	return true;
+}
+
 bool wifi_manager_get_sta_gateway(struct net_in_addr *gw)
 {
 	if (gw == NULL || !wifi_manager_sta_ready()) {

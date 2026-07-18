@@ -7,6 +7,7 @@
 #include "wifi_manager.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 
@@ -56,6 +57,11 @@ static void collect_inputs(struct bridge_telemetry_inputs *inputs)
 	inputs->tcp_server_active_peers = server_stats.active_peers;
 	inputs->tcp_server_max_peers = server_stats.max_peers;
 	inputs->sta_ready = wifi_manager_sta_ready();
+	if (!wifi_manager_get_sta_ipv4(inputs->sta_ipv4, sizeof(inputs->sta_ipv4))) {
+		inputs->sta_ipv4[0] = '\0';
+	}
+	inputs->sta_rssi_dbm = 0;
+	inputs->sta_rssi_valid = wifi_manager_get_sta_rssi(&inputs->sta_rssi_dbm);
 }
 
 void bridge_telemetry_build_snapshot(struct bridge_telemetry_state *state,
@@ -90,6 +96,10 @@ void bridge_telemetry_build_snapshot(struct bridge_telemetry_state *state,
 	snapshot->warnings.frame_loss = inputs->bridge_ingest_dropped_oldest > 0U ||
 		inputs->bridge_sink_dropped_oldest > 0U;
 	snapshot->sta_ready = inputs->sta_ready;
+	memcpy(snapshot->sta_ipv4, inputs->sta_ipv4, sizeof(snapshot->sta_ipv4));
+	snapshot->sta_ipv4[sizeof(snapshot->sta_ipv4) - 1U] = '\0';
+	snapshot->sta_rssi_valid = inputs->sta_rssi_valid;
+	snapshot->sta_rssi_dbm = inputs->sta_rssi_dbm;
 	copy_counters(inputs, &snapshot->counters);
 }
 

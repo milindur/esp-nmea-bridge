@@ -14,6 +14,14 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/sys/util.h>
 
+#if __has_include(<app_version.h>)
+#include <app_version.h>
+#endif
+
+#ifndef APP_VERSION_STRING
+#define APP_VERSION_STRING ""
+#endif
+
 #ifdef CONFIG_ZTEST
 ssize_t web_app_test_zsock_recv(int sock, void *buf, size_t max_len, int flags);
 ssize_t web_app_test_zsock_send(int sock, const void *buf, size_t len, int flags);
@@ -87,6 +95,7 @@ static struct k_thread web_thread;
 static uint8_t ota_rx_buf[WEB_APP_RX_BUF_SIZE];
 #ifdef CONFIG_ZTEST
 static bool web_app_test_force_ota_upload_disallowed;
+static size_t web_app_test_json_capacity;
 #endif
 K_THREAD_STACK_DEFINE(web_stack, 4096);
 
@@ -243,7 +252,11 @@ static int write_status_json(int fd)
 	const char *connection_state;
 	const char *input_state;
 	static char body[WEB_APP_JSON_BUF_SIZE];
+	size_t body_capacity = sizeof(body);
 	char escaped_last_error[OTA_UPDATE_LAST_ERROR_LEN * 2U];
+	char sta_ipv4_json[BRIDGE_TELEMETRY_IPV4_ADDR_STR_LEN + 2U];
+	char sta_rssi_json[12];
+	int body_len;
 
 	bridge_telemetry_get_snapshot(&snapshot);
 	get_ota_status_for_json(&ota_status);
@@ -253,10 +266,28 @@ static int write_status_json(int fd)
 	input_state = snapshot.input_state == BRIDGE_TELEMETRY_NMEA_INPUT_ACTIVE ?
 		"active" : "idle";
 
-	(void)snprintk(body, sizeof(body),
-		"{\"connection_state\":\"%s\",\"input_state\":\"%s\","
+	if (snapshot.sta_ipv4[0] != '\0') {
+		(void)snprintk(sta_ipv4_json, sizeof(sta_ipv4_json), "\"%s\"", snapshot.sta_ipv4);
+	} else {
+		(void)snprintk(sta_ipv4_json, sizeof(sta_ipv4_json), "null");
+	}
+	if (snapshot.sta_rssi_valid) {
+		(void)snprintk(sta_rssi_json, sizeof(sta_rssi_json), "%d", snapshot.sta_rssi_dbm);
+	} else {
+		(void)snprintk(sta_rssi_json, sizeof(sta_rssi_json), "null");
+	}
+
+#ifdef CONFIG_ZTEST
+	if (web_app_test_json_capacity != 0U && web_app_test_json_capacity < body_capacity) {
+		body_capacity = web_app_test_json_capacity;
+	}
+#endif
+
+	body_len = snprintk(body, body_capacity,
+		"{\"firmware_version\":\"%s\","
+		"\"connection_state\":\"%s\",\"input_state\":\"%s\","
 		"\"warnings\":{\"data_quality\":%s,\"frame_loss\":%s},"
-		"\"wifi\":{\"sta_ready\":%s},"
+		"\"wifi\":{\"sta_ready\":%s,\"ip\":%s,\"rssi\":%s},"
 		"\"uart\":{\"bytes_rx\":%u,\"frames_rx\":%u,\"overlong_frames\":%u,"
 		"\"ais_self_mmsi_filtered\":%u},"
 		"\"bridge\":{\"frames_in\":%u,\"ingest_dropped_oldest\":%u,"
@@ -267,10 +298,12 @@ static int write_status_json(int fd)
 		"\"ota\":{\"enabled\":%s,\"state\":\"%s\",\"uploaded_bytes\":%zu,"
 		"\"expected_bytes\":%zu,\"max_upload_bytes\":%zu,\"upload_allowed\":%s,"
 		"\"slot\":%u,\"confirmed\":%s,\"last_error\":\"%s\"}}",
+		APP_VERSION_STRING,
 		connection_state, input_state,
 		snapshot.warnings.data_quality ? "true" : "false",
 		snapshot.warnings.frame_loss ? "true" : "false",
 		snapshot.sta_ready ? "true" : "false",
+		sta_ipv4_json, sta_rssi_json,
 		counters->uart_bytes_rx, counters->uart_frames_rx, counters->uart_overlong_frames,
 		counters->uart_ais_self_mmsi_filtered,
 		counters->bridge_frames_in, counters->bridge_ingest_dropped_oldest,
@@ -283,6 +316,12 @@ static int write_status_json(int fd)
 		ota_status.expected_bytes, ota_status.max_upload_bytes,
 		ota_upload_allowed() ? "true" : "false", ota_status.slot,
 		ota_status.confirmed ? "true" : "false", escaped_last_error);
+
+	if (body_len < 0 || (size_t)body_len >= body_capacity) {
+		LOG_ERR("Status JSON needs %d bytes, buffer holds %zu", body_len, body_capacity);
+		return write_text_response(fd, "500 Internal Server Error", "application/json",
+					   "{\"error\":\"status payload exceeds buffer\"}\n");
+	}
 
 	int ret = write_text_response(fd, "200 OK", "application/json", body);
 
@@ -638,6 +677,11 @@ void web_app_test_handle_client(int fd)
 void web_app_test_set_ota_upload_disallowed(bool disallowed)
 {
 	web_app_test_force_ota_upload_disallowed = disallowed;
+}
+
+void web_app_test_set_json_capacity(size_t capacity)
+{
+	web_app_test_json_capacity = capacity;
 }
 #endif
 

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define BRIDGE_TELEMETRY_NMEA_INPUT_WINDOW_MS 5000U
+#define BRIDGE_TELEMETRY_IPV4_ADDR_STR_LEN 16U
 
 enum bridge_telemetry_nmea_connection_state {
 	BRIDGE_TELEMETRY_NMEA_DISCONNECTED,
@@ -42,6 +43,9 @@ struct bridge_telemetry_snapshot {
 	enum bridge_telemetry_nmea_input_state input_state;
 	struct bridge_telemetry_warnings warnings;
 	bool sta_ready;
+	char sta_ipv4[BRIDGE_TELEMETRY_IPV4_ADDR_STR_LEN]; /* empty when unavailable */
+	bool sta_rssi_valid;
+	int sta_rssi_dbm;
 	struct bridge_telemetry_counters counters;
 };
 
@@ -60,6 +64,9 @@ struct bridge_telemetry_inputs {
 	uint32_t tcp_server_active_peers;
 	uint32_t tcp_server_max_peers;
 	bool sta_ready;
+	char sta_ipv4[BRIDGE_TELEMETRY_IPV4_ADDR_STR_LEN]; /* empty when unavailable */
+	bool sta_rssi_valid;
+	int sta_rssi_dbm;
 };
 
 struct bridge_telemetry_state {
