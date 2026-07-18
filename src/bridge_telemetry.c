@@ -38,6 +38,7 @@ static void collect_inputs(struct bridge_telemetry_inputs *inputs)
 	struct tcp_nmea_server_stats server_stats;
 	struct tcp_nmea_session_stats session_stats;
 
+	memset(inputs, 0, sizeof(*inputs));
 	uart_nmea_get_stats(&uart_stats);
 	nmea_bridge_get_stats(&bridge_stats);
 	tcp_nmea_server_get_stats(&server_stats);

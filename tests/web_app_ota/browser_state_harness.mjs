@@ -35,6 +35,22 @@ function otaMessage({ status, file, uploadInProgress }) {
   return 'Choose a signed binary to upload to the inactive app slot.';
 }
 
+function versionBadge(firmwareVersion) {
+  return firmwareVersion ? `v${firmwareVersion}` : '—';
+}
+
+function connectionDetail(status) {
+  const clients = status.tcp_server ? status.tcp_server.active_peers : null;
+  return clients == null ? '—' : `${clients} TCP client${clients === 1 ? '' : 's'}`;
+}
+
+function wifiDetail(wifi) {
+  if (!wifi.sta_ready) return '—';
+  const wifiIp = wifi.ip || '—';
+  const wifiRssi = wifi.rssi == null ? '—' : `${String(wifi.rssi).replace('-', '−')} dBm`;
+  return `${wifiIp} · ${wifiRssi}`;
+}
+
 const now = 1_000;
 assert.equal(selectedFileTooLarge({ size: 1025 }, 1024), true);
 assert.equal(selectedFileTooLarge({ size: 1024 }, 1024), false);
@@ -57,5 +73,18 @@ assert.match(otaMessage({ status: { enabled: true, upload_allowed: false }, file
 assert.match(otaMessage({ status: { enabled: true, upload_allowed: true, max_upload_bytes: 1024 }, file: { size: 1025 }, uploadInProgress: false }), /maximum accepted size/);
 assert.match(otaMessage({ status: { enabled: true, upload_allowed: true, state: 'pending_reboot' }, file: null, uploadInProgress: false }), /reboot/);
 assert.match(otaMessage({ status: { enabled: true, upload_allowed: true, state: 'confirmed' }, file: null, uploadInProgress: false }), /confirmed/);
+
+assert.equal(versionBadge('0.5.0'), 'v0.5.0');
+assert.equal(versionBadge(''), '—');
+assert.equal(versionBadge(undefined), '—');
+assert.equal(connectionDetail({ tcp_server: { active_peers: 1 } }), '1 TCP client');
+assert.equal(connectionDetail({ tcp_server: { active_peers: 2 } }), '2 TCP clients');
+assert.equal(connectionDetail({ tcp_server: { active_peers: 0 } }), '0 TCP clients');
+assert.equal(connectionDetail({ tcp_server: {} }), '—');
+assert.equal(connectionDetail({}), '—');
+assert.equal(wifiDetail({ sta_ready: true, ip: '192.168.4.7', rssi: -58 }), '192.168.4.7 · −58 dBm');
+assert.equal(wifiDetail({ sta_ready: true, ip: '10.0.0.2', rssi: 0 }), '10.0.0.2 · 0 dBm');
+assert.equal(wifiDetail({ sta_ready: true, ip: null, rssi: null }), '— · —');
+assert.equal(wifiDetail({ sta_ready: false, ip: '192.168.4.7', rssi: -58 }), '—');
 
 console.log('browser OTA state harness passed');

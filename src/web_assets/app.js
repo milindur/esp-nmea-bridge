@@ -250,8 +250,8 @@ function render(status) {
 
   setText('fw-version', status.firmware_version ? `v${status.firmware_version}` : '—');
 
-  const clients = status.tcp.active_sessions ?? 0;
-  setText('connection-detail', `${format(clients)} TCP client${clients === 1 ? '' : 's'}`);
+  const clients = status.tcp_server ? status.tcp_server.active_peers : null;
+  setText('connection-detail', clients == null ? '—' : `${format(clients)} TCP client${clients === 1 ? '' : 's'}`);
 
   const wifiIp = status.wifi.ip || '—';
   const wifiRssi = status.wifi.rssi == null ? '—' : `${String(status.wifi.rssi).replace('-', '−')} dBm`;

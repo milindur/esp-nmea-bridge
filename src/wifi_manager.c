@@ -50,7 +50,7 @@ static struct net_in_addr *sta_dhcp_addr(void)
 	for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
 		struct net_if_addr_ipv4 *unicast = &sta_iface->config.ip.ipv4->unicast[i];
 
-		if (unicast->ipv4.addr_type != NET_ADDR_DHCP) {
+		if (!unicast->ipv4.is_used || unicast->ipv4.addr_type != NET_ADDR_DHCP) {
 			continue;
 		}
 
@@ -507,7 +507,7 @@ bool wifi_manager_get_sta_rssi(int *rssi_dbm)
 {
 	struct wifi_iface_status status = { 0 };
 
-	if (rssi_dbm == NULL || sta_iface == NULL || !sta_connected) {
+	if (rssi_dbm == NULL || sta_iface == NULL || !wifi_manager_sta_ready()) {
 		return false;
 	}
 
