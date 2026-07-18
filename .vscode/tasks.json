@@ -4,21 +4,21 @@
     {
       "label": "west: build esp32c6",
       "type": "shell",
-      "command": "cd $(west topdir) && west build -p always --sysbuild -b esp32c6_dev_kit_n8/esp32c6/hpcore esp-nmea-bridge -- -DEXTRA_CONF_FILE=local.conf",
+      "command": "west build -p always --sysbuild -b esp32c6_dev_kit_n8/esp32c6/hpcore . -- -DEXTRA_CONF_FILE=local.conf",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "west: flash esp32c6",
       "type": "shell",
-      "command": "cd $(west topdir) && west flash --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag",
+      "command": "west flash --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag",
       "group": "none",
       "problemMatcher": []
     },
     {
       "label": "west: twister tests",
       "type": "shell",
-      "command": "cd $(west topdir) && west twister -T esp-nmea-bridge/tests/ --inline-logs",
+      "command": "west twister -c -O build/twister -T tests/ --inline-logs",
       "group": "test",
       "problemMatcher": []
     },

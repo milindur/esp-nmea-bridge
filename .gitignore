@@ -1,3 +1,7 @@
 # Local build/credential overlays
 local.conf
 *.local.conf
+
+# In-tree build and Twister output
+/build/
+/twister-out*/

@@ -7,7 +7,7 @@ This directory contains Phase 4 OTA boundary coverage.
 Run through Zephyr twister:
 
 ```sh
-devcontainer exec --workspace-folder . /bin/bash -lc 'cd /workspaces/esp-nmea-bridge-workspace && west twister -T esp-nmea-bridge/tests/web_app_ota --inline-logs'
+devcontainer exec --workspace-folder . /bin/bash -lc 'cd /workspaces/esp-nmea-bridge-workspace/esp-nmea-bridge && west twister -c -O build/twister -T tests/web_app_ota --inline-logs'
 ```
 
 The ztest harness compiles `src/web_app.c` with fake socket, telemetry, and OTA-domain APIs. It covers:

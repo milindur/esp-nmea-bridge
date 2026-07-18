@@ -133,7 +133,7 @@ The default hostname is `esp-nmea-bridge`, so mDNS resolves `esp-nmea-bridge.loc
 This repository includes a VS Code Dev Container for a hybrid Zephyr workspace:
 
 - the app repository is bind-mounted from the host, so normal host-side Git workflows keep working;
-- the Zephyr workspace parent, `.west/`, `zephyr/`, modules, and build artifacts live in the persistent Docker volume `esp-nmea-bridge-west-workspace`;
+- the Zephyr workspace parent, `.west/`, `zephyr/`, and modules live in the persistent Docker volume `esp-nmea-bridge-west-workspace`; build artifacts go to `build/` inside the bind-mounted app repository and are therefore accessible from the host;
 - the container image provides the Zephyr SDK, Python environment, `west`, CMake, Ninja, `clangd`, `ccache`, and serial helper tools.
 
 Open `esp-nmea-bridge/` in VS Code and run **Dev Containers: Reopen in Container**. On first creation, `.devcontainer/setup-workspace.sh` initializes the workspace and fetches Zephyr projects and Espressif blobs. Later starts reuse the Docker volume and do not run `west update` automatically.
@@ -150,27 +150,29 @@ If a rebuilt container reports missing Python tools such as `jsonschema` or `esp
 bash .devcontainer/setup-workspace.sh
 ```
 
-The container runs as the `vscode` user with `updateRemoteUserUID` enabled, so files created in the bind-mounted app repository use the host user's UID/GID instead of becoming root-owned. Deleting the Docker volume removes the cached Zephyr checkout, modules, build outputs, and `.west/`, but not the host-mounted app repository.
+The container runs as the `vscode` user with `updateRemoteUserUID` enabled, so files created in the bind-mounted app repository use the host user's UID/GID instead of becoming root-owned. Deleting the Docker volume removes the cached Zephyr checkout, modules, and `.west/`, but not the host-mounted app repository or its `build/` directory.
 
 ## Build
 
-From the workspace root, build a plain application image with a local overlay:
+Run builds from the application directory `esp-nmea-bridge/`. The build directory is the west default `build/` inside the application directory, so build results stay in the bind-mounted repository and remain accessible from the host when building inside the Dev Container.
+
+Build a plain application image with a local overlay:
 
 ```sh
+cd esp-nmea-bridge
 west build -p always \
-  -d build-esp32c6 \
   -b esp32c6_dev_kit_n8/esp32c6/hpcore \
-  esp-nmea-bridge \
+  . \
   -- -DEXTRA_CONF_FILE=local.conf
 ```
 
 Without a local overlay file:
 
 ```sh
+cd esp-nmea-bridge
 west build -p always \
-  -d build-esp32c6 \
   -b esp32c6_dev_kit_n8/esp32c6/hpcore \
-  esp-nmea-bridge
+  .
 ```
 
 ### Build with MCUboot
@@ -178,36 +180,38 @@ west build -p always \
 Use sysbuild when you want MCUboot, signed application images, or future OTA updates:
 
 ```sh
+cd esp-nmea-bridge
 west build -p always \
-  -d build-esp32c6 \
   -b esp32c6_dev_kit_n8/esp32c6/hpcore \
-  esp-nmea-bridge \
+  . \
   --sysbuild
 ```
 
 This builds both MCUboot and the application. The signed application image is generated at:
 
 ```text
-build-esp32c6/esp-nmea-bridge/zephyr/zephyr.signed.bin
+build/esp-nmea-bridge/zephyr/zephyr.signed.bin
 ```
 
 Plain non-MCUboot builds remain supported; omit `--sysbuild` when you do not need MCUboot or OTA-capable images.
 
 ## Flash and monitor
 
+From the application directory (`west flash` finds `./build` automatically):
+
 ```sh
-west flash -d build-esp32c6
+west flash
 west espressif monitor
 ```
 
 If the board definition's udev rules are installed, flash explicitly through the stable JTAG link:
 
 ```sh
-sudo cp esp-nmea-bridge/boards/waveshare/esp32c6_dev_kit_n8/support/99-waveshare-esp32c6-dev-kit-n8.rules /etc/udev/rules.d/
+sudo cp boards/waveshare/esp32c6_dev_kit_n8/support/99-waveshare-esp32c6-dev-kit-n8.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
 sudo udevadm trigger -s tty
 
-west flash -d build-esp32c6 --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag
+west flash --esp-device /dev/waveshare/esp32c6-dev-kit-n8/jtag
 ```
 
 ## Connect a navigation app
@@ -256,10 +260,10 @@ The advertised service uses TCP port `10110` by default and includes TXT metadat
 
 ## Development and tests
 
-Run the status LED policy test with Twister:
+Run the status LED policy test with Twister from the application directory. `-c -O build/twister` keeps a single output directory under `build/` instead of accumulating numbered `twister-out.N` directories:
 
 ```sh
-west twister -T esp-nmea-bridge/tests/status_led_policy --inline-logs
+west twister -c -O build/twister -T tests/status_led_policy --inline-logs
 ```
 
 ## Further Zephyr documentation

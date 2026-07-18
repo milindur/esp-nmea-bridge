@@ -1,5 +1,5 @@
 CompileFlags:
-  CompilationDatabase: ../build/esp-nmea-bridge
+  CompilationDatabase: build/esp-nmea-bridge
   Remove:
     - -fno-printf-return-value
     - -fno-reorder-functions
