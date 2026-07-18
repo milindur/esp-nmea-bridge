@@ -1,8 +1,9 @@
 const $ = (id) => document.getElementById(id);
 const fmt = new Intl.NumberFormat('en-US');
 const format = (v) => fmt.format(v ?? 0);
-const metrics = ['frames', 'bytes', 'peers', 'drops', 'warn-count'];
+const counters = ['frames', 'bytes', 'peers', 'drops', 'warn-count'];
 
+let statusOffline = false;
 let otaAvailable = false;
 let otaUploadAllowed = false;
 let otaUploadInProgress = false;
@@ -12,7 +13,7 @@ let otaLastStatus = null;
 
 function setText(id, text) {
   const el = $(id);
-  if (el) el.textContent = text;
+  if (el && el.textContent !== text) el.textContent = text;
 }
 
 function setState(id, state, okState) {
@@ -32,17 +33,90 @@ function formatBytes(value) {
   return `${format(Math.round(bytes / 104857.6) / 10)} MiB`;
 }
 
+/* Theme */
+
+const themeColors = { light: '#eef0f3', dark: '#14171a' };
+const osDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+function effectiveTheme() {
+  const manual = document.documentElement.dataset.theme;
+  return manual === 'light' || manual === 'dark' ? manual : (osDark.matches ? 'dark' : 'light');
+}
+
+function syncThemeUi() {
+  const theme = effectiveTheme();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = themeColors[theme];
+  const toggle = $('theme-toggle');
+  if (toggle) toggle.setAttribute('aria-label', `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`);
+}
+
+function wireTheme() {
+  const toggle = $('theme-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem('theme', next); } catch (error) { /* private mode */ }
+      syncThemeUi();
+    });
+  }
+  if (osDark.addEventListener) osDark.addEventListener('change', syncThemeUi);
+  else if (osDark.addListener) osDark.addListener(syncThemeUi);
+  syncThemeUi();
+}
+
+/* Tabs */
+
+function switchView(name) {
+  for (const tab of document.querySelectorAll('.tab[data-view]')) {
+    const active = tab.dataset.view === name;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+    const view = $(`view-${tab.dataset.view}`);
+    if (view) view.hidden = !active;
+  }
+}
+
+function wireTabs() {
+  const tabs = Array.from(document.querySelectorAll('.tab[data-view]'));
+  for (const tab of tabs) tab.addEventListener('click', () => switchView(tab.dataset.view));
+
+  const list = document.querySelector('.tabs');
+  if (list) {
+    list.addEventListener('keydown', (event) => {
+      const index = tabs.indexOf(document.activeElement);
+      if (index < 0) return;
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      tabs[next].focus();
+      switchView(tabs[next].dataset.view);
+    });
+  }
+}
+
+/* OTA */
+
 function setOtaMessage(text, severity) {
   const el = $('ota-message');
   if (!el) return;
-  el.textContent = text;
+  if (el.textContent !== text) el.textContent = text;
   el.classList.remove('is-ok', 'is-warn', 'is-bad');
   if (severity) el.classList.add(`is-${severity}`);
 }
 
 function setOtaProgress(percent) {
   const bar = $('ota-progress-bar');
-  if (bar) bar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  if (!bar) return;
+  const clamped = Math.max(0, Math.min(100, percent));
+  bar.style.width = `${clamped}%`;
+  bar.parentElement.setAttribute('aria-valuenow', String(Math.round(clamped)));
 }
 
 function selectedFile() {
@@ -58,13 +132,19 @@ function updateOtaControls() {
   const fileInput = $('ota-file');
   const button = $('ota-upload-button');
   const file = selectedFile();
-  const disabled = !otaAvailable || !otaUploadAllowed || otaUploadInProgress || Date.now() < otaRebootExpectedUntil;
+  const disabled = statusOffline || !otaAvailable || !otaUploadAllowed || otaUploadInProgress || Date.now() < otaRebootExpectedUntil;
   if (fileInput) fileInput.disabled = disabled;
   if (button) button.disabled = disabled || !file || selectedFileTooLarge(file);
 }
 
+function rowItem(label, value, severity) {
+  const cls = severity ? ` class="row is-${severity}"` : ' class="row"';
+  return `<div${cls}><dt>${label}</dt><dd>${value}</dd></div>`;
+}
+
 function setOffline(error) {
   const expectedOtaReboot = Date.now() < otaRebootExpectedUntil;
+  statusOffline = true;
 
   for (const id of ['connection-state', 'input-state', 'wifi-state']) {
     const el = $(id);
@@ -74,39 +154,35 @@ function setOffline(error) {
     el.querySelector('b').textContent = expectedOtaReboot ? 'REBOOTING' : 'OFFLINE';
   }
 
-  for (const id of metrics) setText(id, '—');
+  setText('connection-detail', '—');
+  setText('wifi-detail', '—');
+  for (const id of counters) setText(id, '—');
 
-  const reason = expectedOtaReboot
-    ? 'OTA upload completed. The bridge is rebooting into the test image; polling will resume automatically.'
-    : (error instanceof Error && error.message ? `Reason: ${error.message}` : 'No response from /api/status');
   const notice = $('offline-notice');
   if (notice) notice.hidden = false;
-  setText('offline-reason', reason);
-  setText('poll-label', expectedOtaReboot ? 'OTA reboot watch' : 'Offline watch');
-  setText('updated', `${expectedOtaReboot ? 'Rebooting' : 'Offline'} ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}`);
-  setText('app-health', expectedOtaReboot ? 'ESP NMEA Bridge · OTA reboot expected' : 'ESP NMEA Bridge · offline / API unreachable');
+  setText('offline-title', expectedOtaReboot ? 'Rebooting for firmware update' : 'Bridge unreachable');
+  setText('offline-reason', expectedOtaReboot
+    ? 'OTA upload complete. The bridge is rebooting into the test image; this page reconnects automatically.'
+    : (error instanceof Error && error.message
+      ? `No response from the bridge (${error.message}). Retrying every 2 s.`
+      : 'No response from the bridge. Retrying every 2 s.'));
+  setText('updated', expectedOtaReboot ? 'Rebooting · retrying every 2 s' : 'Offline · retrying every 2 s');
 
   $('details').innerHTML = expectedOtaReboot
-    ? rowItem('Status API', 'temporarily unavailable during OTA reboot', 'warn') +
+    ? rowItem('Status updates', 'paused during reboot', 'warn') +
       rowItem('Next retry', 'in 2 s') +
       rowItem('Expected result', 'test image comes online and self-confirms', 'ok')
-    : rowItem('Status API', 'unreachable', 'bad') +
-      rowItem('Displayed counters', 'unavailable', 'warn') +
+    : rowItem('Status updates', 'unreachable', 'bad') +
+      rowItem('Counters', 'unavailable', 'warn') +
       rowItem('Next retry', 'in 2 s');
 
   updateOtaControls();
 }
 
 function clearOffline() {
+  statusOffline = false;
   const notice = $('offline-notice');
   if (notice) notice.hidden = true;
-  setText('poll-label', 'Watch in progress');
-  setText('app-health', 'ESP NMEA Bridge · firmware live');
-}
-
-function rowItem(label, value, severity) {
-  const cls = severity ? ` class="row is-${severity}"` : ' class="row"';
-  return `<div${cls}><dt>${label}</dt><dd>${value}</dd></div>`;
 }
 
 function renderOta(ota) {
@@ -114,7 +190,6 @@ function renderOta(ota) {
   const state = status.state || 'unknown';
   const stateSeverity = !status.enabled || state === 'error' ? 'bad' : (state === 'ready' || state === 'confirmed' ? 'ok' : 'warn');
   const badge = $('ota-state');
-  const panel = $('ota');
   const file = selectedFile();
 
   otaLastStatus = status;
@@ -127,15 +202,6 @@ function renderOta(ota) {
     badge.textContent = status.enabled ? state.replace(/_/g, ' ') : 'disabled';
     badge.classList.remove('state-ok', 'state-warn', 'state-bad');
     badge.classList.add(`state-${stateSeverity}`);
-  }
-  if (panel) {
-    panel.classList.remove('is-ota-disabled', 'is-ota-gated', 'is-ota-uploading', 'is-ota-pending', 'is-ota-error', 'is-ota-confirmed');
-    if (!status.enabled) panel.classList.add('is-ota-disabled');
-    else if (!status.upload_allowed) panel.classList.add('is-ota-gated');
-    else if (state === 'uploading') panel.classList.add('is-ota-uploading');
-    else if (state === 'pending_reboot') panel.classList.add('is-ota-pending');
-    else if (state === 'error') panel.classList.add('is-ota-error');
-    else if (state === 'confirmed') panel.classList.add('is-ota-confirmed');
   }
 
   setText('ota-enabled', status.enabled ? 'enabled' : 'disabled');
@@ -181,8 +247,12 @@ function render(status) {
   setState('input-state', status.input_state, 'active');
   setState('wifi-state', status.wifi.sta_ready ? 'linked' : 'idle', 'linked');
 
+  const sessions = status.tcp.active_sessions ?? 0;
+  setText('connection-detail', `${format(sessions)} TCP session${sessions === 1 ? '' : 's'}`);
+  setText('wifi-detail', status.wifi.sta_ready ? 'IPv4 address assigned' : 'Waiting for IPv4 address');
+
   setText('frames', format(status.bridge.frames_in));
-  setText('bytes', format(status.uart.bytes_rx));
+  setText('bytes', formatBytes(status.uart.bytes_rx));
   setText('peers', `${format(status.tcp_server.active_peers)} / ${format(status.tcp_server.max_peers)}`);
   setText('drops', format(status.bridge.sink_dropped_oldest));
 
@@ -203,7 +273,7 @@ function render(status) {
     rowItem('Data quality warning', status.warnings.data_quality ? 'yes' : 'no', status.warnings.data_quality ? 'bad' : 'ok') +
     rowItem('Frame loss warning', status.warnings.frame_loss ? 'yes' : 'no', status.warnings.frame_loss ? 'bad' : 'ok');
 
-  setText('updated', `Updated ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})}`);
+  setText('updated', `Updated ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})} · every 2 s`);
 }
 
 async function pollStatus() {
@@ -252,8 +322,7 @@ function uploadFirmware(file) {
 
 async function handleOtaSubmit(event) {
   event.preventDefault();
-  const fileInput = $('ota-file');
-  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  const file = selectedFile();
 
   if (!file) {
     setOtaMessage('Choose a firmware binary before uploading.', 'warn');
@@ -281,7 +350,7 @@ async function handleOtaSubmit(event) {
       otaRebootExpectedUntil = Date.now() + 120000;
       renderOta({ ...(otaLastStatus || {}), enabled: true, upload_allowed: true, state: 'pending_reboot', uploaded_bytes: file.size, expected_bytes: file.size });
       setOtaProgress(100);
-      setOtaMessage('Upload accepted. The bridge is rebooting; polling will resume automatically.', 'ok');
+      setOtaMessage('Upload accepted. The bridge is rebooting; this page reconnects automatically.', 'ok');
     } else {
       setOtaMessage(`Upload accepted with state ${result.state || 'unknown'}. Waiting for status refresh.`, 'ok');
     }
@@ -294,14 +363,31 @@ async function handleOtaSubmit(event) {
   }
 }
 
+function wireDropZone(fileInput) {
+  const zone = document.querySelector('.file-picker');
+  if (!zone) return;
+  for (const type of ['dragover', 'drop']) {
+    document.addEventListener(type, (event) => event.preventDefault());
+  }
+  zone.addEventListener('dragover', () => zone.classList.add('is-dragover'));
+  zone.addEventListener('dragleave', () => zone.classList.remove('is-dragover'));
+  zone.addEventListener('drop', (event) => {
+    zone.classList.remove('is-dragover');
+    if (fileInput.disabled || !event.dataTransfer || !event.dataTransfer.files.length) return;
+    fileInput.files = event.dataTransfer.files;
+    fileInput.dispatchEvent(new Event('change'));
+  });
+}
+
 function wireOtaUi() {
   const form = $('ota-form');
   const fileInput = $('ota-file');
 
   if (form) form.addEventListener('submit', handleOtaSubmit);
   if (fileInput) {
+    wireDropZone(fileInput);
     fileInput.addEventListener('change', () => {
-      const file = fileInput.files && fileInput.files[0];
+      const file = selectedFile();
       setText('ota-file-name', file ? `${file.name} · ${formatBytes(file.size)}` : 'Choose firmware binary');
       if (file && selectedFileTooLarge(file)) {
         setOtaMessage(`Selected file is ${formatBytes(file.size)}; maximum accepted size is ${formatBytes(otaMaxUploadBytes)}.`, 'bad');
@@ -314,6 +400,8 @@ function wireOtaUi() {
   }
 }
 
+wireTheme();
+wireTabs();
 wireOtaUi();
 pollStatus();
 setInterval(pollStatus, 2000);
