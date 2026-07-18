@@ -1022,6 +1022,7 @@ ZTEST(web_app_config_api, test_post_tcp_enable_with_sta_disabled_still_saves)
 {
 	reset_harness();
 	fake_sta.enabled = false;
+	fake_tcp.enabled = false;
 	set_config_post("{\"tcp_client_enabled\":true}");
 
 	web_app_test_handle_client(1);
@@ -1030,6 +1031,19 @@ ZTEST(web_app_config_api, test_post_tcp_enable_with_sta_disabled_still_saves)
 	zassert_true(response_contains("HTTP/1.1 200 OK"));
 	zassert_equal(tcp_set_count, 1);
 	zassert_true(last_set_tcp.enabled);
+	zassert_true(response_contains("\"tcp_client_enabled\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_leading_zero_tcp_host_rejected)
+{
+	reset_harness();
+	set_config_post("{\"tcp_client_host\":\"192.168.001.050\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("\"tcp_client_host\":"));
+	zassert_equal(tcp_set_count, 0);
 }
 
 ZTEST(web_app_config_api, test_post_tcp_save_failure_reports_500)

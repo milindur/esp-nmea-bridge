@@ -166,8 +166,8 @@ function renderAisConfig(cfg) {
   $('ais-mmsi').value = String(cfg.ais_own_mmsi ?? 0);
 }
 
-/* Latest known enable states, so the soft STA hint stays right when either
- * card is saved on its own. */
+/* Latest stored enable states from API responses, so the soft STA hint
+ * reflects the device's persisted configuration — never unsaved edits. */
 let staEnabledState = false;
 let tcpEnabledState = false;
 
@@ -338,7 +338,8 @@ async function handleStaSubmit(event) {
 function tcpHostError(host) {
   if (host === '') return '';
   const octets = host.split('.');
-  if (octets.length !== 4 || octets.some((o) => !/^\d{1,3}$/.test(o) || Number(o) > 255)) {
+  // No leading zeros: matches the device-side parser.
+  if (octets.length !== 4 || octets.some((o) => !/^(0|[1-9]\d{0,2})$/.test(o) || Number(o) > 255)) {
     return 'Enter an IPv4 address, or leave blank to use the Wi-Fi gateway.';
   }
   return '';
@@ -409,16 +410,6 @@ function wireConfigUi() {
   if (staForm) staForm.addEventListener('submit', handleStaSubmit);
   const tcpForm = $('tcp-config-form');
   if (tcpForm) tcpForm.addEventListener('submit', handleTcpSubmit);
-  const tcpEnabled = $('tcp-enabled');
-  if (tcpEnabled) tcpEnabled.addEventListener('change', () => {
-    tcpEnabledState = tcpEnabled.checked;
-    renderTcpStaHint();
-  });
-  const staEnabled = $('sta-enabled');
-  if (staEnabled) staEnabled.addEventListener('change', () => {
-    staEnabledState = staEnabled.checked;
-    renderTcpStaHint();
-  });
   const pskClear = $('sta-psk-clear');
   if (pskClear) pskClear.addEventListener('change', updateConfigControls);
   const reboot = $('reboot-button');

@@ -32,7 +32,11 @@ struct bridge_config_tcp_client {
 
 typedef void (*bridge_config_listener_t)(void);
 
-/* True for an empty string or a dotted-quad IPv4 address (octets 0..255). */
+/*
+ * True for an empty string or a dotted-quad IPv4 address (octets 0..255).
+ * Leading zeros are rejected to match Zephyr's net_addr_pton(), which the
+ * TCP NMEA client uses to parse the stored host.
+ */
 static inline bool bridge_config_tcp_client_host_valid(const char *host)
 {
 	int octets = 0;
@@ -45,6 +49,7 @@ static inline bool bridge_config_tcp_client_host_valid(const char *host)
 	}
 
 	while (*host != '\0') {
+		bool leading_zero = host[0] == '0' && host[1] >= '0' && host[1] <= '9';
 		int value = 0;
 		int digits = 0;
 
@@ -53,7 +58,7 @@ static inline bool bridge_config_tcp_client_host_valid(const char *host)
 			digits++;
 			host++;
 		}
-		if (digits == 0 || digits > 3 || value > 255) {
+		if (digits == 0 || digits > 3 || value > 255 || leading_zero) {
 			return false;
 		}
 		octets++;

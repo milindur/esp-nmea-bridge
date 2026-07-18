@@ -562,6 +562,8 @@ ZTEST(bridge_config, test_set_tcp_rejects_invalid_fields_without_saving)
 {
 	static const char *const bad_hosts[] = {
 		"not-an-ip", "1.2.3", "1.2.3.4.5", "256.1.1.1", "1.2.3.4 ", "1..2.3", "1.2.3.",
+		/* Leading zeros: net_addr_pton would reject the stored host. */
+		"010.0.0.1", "1.2.3.04",
 	};
 	struct bridge_config_tcp_client next;
 	struct bridge_config_tcp_client tcp;
