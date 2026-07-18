@@ -85,7 +85,9 @@ static bool sta_record_unpack(const uint8_t record[STA_RECORD_LEN], struct bridg
 	dst->rotate_mac = record[1] != 0U;
 	memcpy(dst->ssid, &record[STA_RECORD_SSID_OFF], ssid_len);
 	memcpy(dst->psk, &record[STA_RECORD_PSK_OFF], psk_len);
-	return true;
+	/* Embedded NULs would silently shorten the credentials in use. */
+	return strlen(dst->ssid) == ssid_len && strlen(dst->psk) == psk_len &&
+	       bridge_config_text_valid(dst->ssid);
 }
 
 /*
@@ -120,7 +122,9 @@ static bool ap_record_unpack(const uint8_t record[AP_RECORD_LEN], struct bridge_
 	memset(dst, 0, sizeof(*dst));
 	memcpy(dst->ssid, &record[AP_RECORD_SSID_OFF], ssid_len);
 	memcpy(dst->psk, &record[AP_RECORD_PSK_OFF], psk_len);
-	return true;
+	/* An embedded NUL could silently turn the rescue AP into an open one. */
+	return strlen(dst->ssid) == ssid_len && strlen(dst->psk) == psk_len &&
+	       bridge_config_text_valid(dst->ssid);
 }
 
 /* The hostname travels as [0] hostname_len, [1..32] hostname. */
@@ -146,7 +150,8 @@ static bool sys_record_unpack(const uint8_t record[SYS_RECORD_LEN],
 
 	memset(dst, 0, sizeof(*dst));
 	memcpy(dst->hostname, &record[SYS_RECORD_HOSTNAME_OFF], hostname_len);
-	return bridge_config_hostname_valid(dst->hostname);
+	return strlen(dst->hostname) == hostname_len &&
+	       bridge_config_hostname_valid(dst->hostname);
 }
 
 /*
@@ -210,6 +215,21 @@ static bool reboot_required;
 static K_MUTEX_DEFINE(config_lock);
 static bridge_config_listener_t listener;
 
+/* Over-long Kconfig defaults would silently truncate or lose termination. */
+BUILD_ASSERT(sizeof(CONFIG_ESP_NMEA_BRIDGE_STA_SSID) <= BRIDGE_CONFIG_WIFI_SSID_MAX + 1,
+	     "STA SSID default exceeds 32 bytes");
+BUILD_ASSERT(sizeof(CONFIG_ESP_NMEA_BRIDGE_STA_PSK) <= BRIDGE_CONFIG_WIFI_PSK_MAX + 1,
+	     "STA PSK default exceeds 63 characters");
+BUILD_ASSERT(sizeof(CONFIG_ESP_NMEA_BRIDGE_AP_SSID) <= BRIDGE_CONFIG_WIFI_SSID_MAX + 1,
+	     "AP SSID default exceeds 32 bytes");
+BUILD_ASSERT(sizeof(CONFIG_ESP_NMEA_BRIDGE_AP_PSK) <= BRIDGE_CONFIG_WIFI_PSK_MAX + 1,
+	     "AP PSK default exceeds 63 characters");
+BUILD_ASSERT(sizeof(CONFIG_NET_HOSTNAME) <= BRIDGE_CONFIG_HOSTNAME_MAX + 1,
+	     "hostname default exceeds 32 characters");
+BUILD_ASSERT(sizeof(CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST) <=
+	     BRIDGE_CONFIG_TCP_CLIENT_HOST_MAX + 1,
+	     "TCP client host default exceeds 15 characters");
+
 static int bridge_config_settings_set(const char *name, size_t len,
 				      settings_read_cb read_cb, void *cb_arg)
 {
@@ -217,7 +237,7 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		uint8_t record[AIS_RECORD_LEN];
 		struct bridge_config_ais stored;
 
-		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0) {
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) != (ssize_t)sizeof(record)) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
 		}
@@ -236,7 +256,7 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		uint8_t record[TCP_RECORD_LEN];
 		struct bridge_config_tcp_client stored;
 
-		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) != (ssize_t)sizeof(record) ||
 		    !tcp_record_unpack(record, &stored)) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
@@ -251,7 +271,7 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		uint8_t record[AP_RECORD_LEN];
 		struct bridge_config_ap stored;
 
-		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) != (ssize_t)sizeof(record) ||
 		    !ap_record_unpack(record, &stored)) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
@@ -266,7 +286,7 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		uint8_t record[SYS_RECORD_LEN];
 		struct bridge_config_system stored;
 
-		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) != (ssize_t)sizeof(record) ||
 		    !sys_record_unpack(record, &stored)) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
@@ -281,7 +301,7 @@ static int bridge_config_settings_set(const char *name, size_t len,
 		uint8_t record[STA_RECORD_LEN];
 		struct bridge_config_sta stored;
 
-		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) < 0 ||
+		if (len != sizeof(record) || read_cb(cb_arg, record, sizeof(record)) != (ssize_t)sizeof(record) ||
 		    !sta_record_unpack(record, &stored)) {
 			LOG_WRN("Ignoring malformed stored %s", name);
 			return 0;
@@ -397,7 +417,8 @@ int bridge_config_set_sta(const struct bridge_config_sta *next)
 	 * capacity already caps the SSID at 32 bytes.
 	 */
 	if (next == NULL || memchr(next->ssid, '\0', sizeof(next->ssid)) == NULL ||
-	    memchr(next->psk, '\0', sizeof(next->psk)) == NULL) {
+	    memchr(next->psk, '\0', sizeof(next->psk)) == NULL ||
+	    !bridge_config_text_valid(next->ssid)) {
 		return -EINVAL;
 	}
 	psk_len = strlen(next->psk);
@@ -449,7 +470,8 @@ int bridge_config_set_ap(const struct bridge_config_ap *next)
 	int ret;
 
 	if (next == NULL || memchr(next->ssid, '\0', sizeof(next->ssid)) == NULL ||
-	    memchr(next->psk, '\0', sizeof(next->psk)) == NULL) {
+	    memchr(next->psk, '\0', sizeof(next->psk)) == NULL ||
+	    !bridge_config_text_valid(next->ssid)) {
 		return -EINVAL;
 	}
 	ssid_len = strlen(next->ssid);

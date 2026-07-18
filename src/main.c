@@ -48,17 +48,17 @@ K_THREAD_DEFINE(stats_tid, 2048, stats_thread, NULL, NULL, NULL,
  */
 static void apply_hostname(void)
 {
-	struct bridge_config_system system;
+	struct bridge_config_system sys_cfg;
 	int ret;
 
 	if (!IS_ENABLED(CONFIG_NET_HOSTNAME_DYNAMIC)) {
 		return;
 	}
 
-	bridge_config_get_system(&system);
-	ret = net_hostname_set(system.hostname, strlen(system.hostname));
+	bridge_config_get_system(&sys_cfg);
+	ret = net_hostname_set(sys_cfg.hostname, strlen(sys_cfg.hostname));
 	if (ret != 0) {
-		LOG_WRN("Setting hostname %s failed: %d", system.hostname, ret);
+		LOG_WRN("Setting hostname %s failed: %d", sys_cfg.hostname, ret);
 	}
 }
 

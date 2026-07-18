@@ -311,12 +311,12 @@ void bridge_config_get_system(struct bridge_config_system *out)
 	*out = fake_system;
 }
 
-int bridge_config_set_system(const struct bridge_config_system *system)
+int bridge_config_set_system(const struct bridge_config_system *sys)
 {
 	system_set_count++;
-	last_set_system = *system;
+	last_set_system = *sys;
 	if (system_set_ret == 0) {
-		fake_system = *system;
+		fake_system = *sys;
 		fake_reboot_required = true;
 	}
 	return system_set_ret;
@@ -731,7 +731,7 @@ ZTEST(web_app_config_api, test_post_save_failure_reports_500)
 	zassert_true(response_contains("saving AIS configuration failed"));
 }
 
-static char config_post_buf[512];
+static char config_post_buf[1024];
 
 static void set_config_post(const char *body)
 {
@@ -962,7 +962,7 @@ ZTEST(web_app_config_api, test_post_non_utf8_ssid_rejected)
 	web_app_test_handle_client(1);
 
 	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
-	zassert_true(response_contains("must be valid UTF-8"));
+	zassert_true(response_contains("must be printable UTF-8"));
 	zassert_equal(sta_set_count, 0);
 }
 
@@ -1248,7 +1248,7 @@ ZTEST(web_app_config_api, test_post_non_utf8_ap_ssid_rejected)
 	web_app_test_handle_client(1);
 
 	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
-	zassert_true(response_contains("must be valid UTF-8"));
+	zassert_true(response_contains("must be printable UTF-8"));
 	zassert_equal(ap_set_count, 0);
 }
 
@@ -1340,6 +1340,35 @@ ZTEST(web_app_config_api, test_post_invalid_ap_field_saves_nothing)
 	zassert_equal(ap_set_count, 0);
 	zassert_equal(system_set_count, 0);
 	zassert_equal(config_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_oversized_config_body_rejected)
+{
+	reset_harness();
+	/* Content-Length beyond WEB_APP_CONFIG_BODY_MAX: rejected before reading. */
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 769\r\n\r\n{");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 413 Payload Too Large"));
+	zassert_equal(config_set_count, 0);
+	zassert_equal(sta_set_count, 0);
+	zassert_equal(ap_set_count, 0);
+	zassert_equal(system_set_count, 0);
+}
+
+ZTEST(web_app_config_api, test_post_control_char_ssid_rejected)
+{
+	reset_harness();
+	/* Raw 0x07 byte; hand-built like the 0xFF case. */
+	set_request("POST /api/config HTTP/1.1\r\nContent-Length: 22\r\n\r\n"
+		    "{\"ap_ssid\":\"Boat\x07Net\"}");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 400 Bad Request"));
+	zassert_true(response_contains("must be printable UTF-8"));
+	zassert_equal(ap_set_count, 0);
 }
 
 ZTEST(web_app_config_api, test_post_combined_ap_and_hostname_saves_both)

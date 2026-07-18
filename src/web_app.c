@@ -407,54 +407,12 @@ static const struct json_obj_descr config_payload_descr[] = {
 			   CONFIG_FIELD_TCP_CLIENT_PORT)
 #define CONFIG_FIELDS_AP (CONFIG_FIELD_AP_SSID | CONFIG_FIELD_AP_PSK | CONFIG_FIELD_AP_PSK_CLEAR)
 
-/*
- * Strict UTF-8 check (rejects overlongs, surrogates, > U+10FFFF): a stored
- * non-UTF-8 SSID would make every /api/config response unparseable JSON in
- * the browser.
- */
-static bool utf8_valid(const char *s)
-{
-	const uint8_t *p = (const uint8_t *)s;
-
-	while (*p != 0U) {
-		uint8_t lead = *p;
-		size_t cont;
-
-		if (lead < 0x80U) {
-			cont = 0U;
-		} else if ((lead & 0xE0U) == 0xC0U && lead >= 0xC2U) {
-			cont = 1U;
-		} else if ((lead & 0xF0U) == 0xE0U) {
-			if ((lead == 0xE0U && (p[1] & 0xE0U) == 0x80U) ||
-			    (lead == 0xEDU && (p[1] & 0xE0U) == 0xA0U)) {
-				return false;
-			}
-			cont = 2U;
-		} else if ((lead & 0xF8U) == 0xF0U && lead <= 0xF4U) {
-			if ((lead == 0xF0U && (p[1] & 0xF0U) == 0x80U) ||
-			    (lead == 0xF4U && p[1] > 0x8FU)) {
-				return false;
-			}
-			cont = 3U;
-		} else {
-			return false;
-		}
-		p++;
-		for (; cont > 0U; cont--, p++) {
-			if ((*p & 0xC0U) != 0x80U) {
-				return false;
-			}
-		}
-	}
-	return true;
-}
-
 static int write_config_json(int fd, const char *status)
 {
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
 	struct bridge_config_ap ap;
-	struct bridge_config_system system;
+	struct bridge_config_system sys_cfg;
 	struct bridge_config_tcp_client tcp;
 	char ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
 	char ap_ssid_json[BRIDGE_CONFIG_WIFI_SSID_MAX * 2U + 1U];
@@ -463,7 +421,7 @@ static int write_config_json(int fd, const char *status)
 	bridge_config_get_ais(&ais);
 	bridge_config_get_sta(&sta);
 	bridge_config_get_ap(&ap);
-	bridge_config_get_system(&system);
+	bridge_config_get_system(&sys_cfg);
 	bridge_config_get_tcp_client(&tcp);
 	json_escape_string(sta.ssid, ssid_json, sizeof(ssid_json));
 	json_escape_string(ap.ssid, ap_ssid_json, sizeof(ap_ssid_json));
@@ -481,7 +439,7 @@ static int write_config_json(int fd, const char *status)
 		       sta.psk[0] != '\0' ? "true" : "false",
 		       sta.rotate_mac ? "true" : "false",
 		       ap_ssid_json, ap.psk[0] != '\0' ? "true" : "false",
-		       system.hostname,
+		       sys_cfg.hostname,
 		       tcp.enabled ? "true" : "false", tcp.host, tcp.port,
 		       bridge_config_reboot_required() ? "true" : "false");
 	return write_text_response(fd, status, "application/json", body);
@@ -826,7 +784,7 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	struct bridge_config_ais ais;
 	struct bridge_config_sta sta;
 	struct bridge_config_ap ap;
-	struct bridge_config_system system;
+	struct bridge_config_system sys_cfg;
 	struct bridge_config_tcp_client tcp;
 	int fields;
 
@@ -876,9 +834,9 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 						       "must be 1 to 32 bytes");
 			return;
 		}
-		if (!utf8_valid(payload.sta_ssid)) {
+		if (!bridge_config_text_valid(payload.sta_ssid)) {
 			(void)write_config_field_error(fd, "sta_ssid",
-						       "must be valid UTF-8");
+						       "must be printable UTF-8");
 			return;
 		}
 	}
@@ -907,9 +865,9 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 						       "must be 1 to 32 bytes");
 			return;
 		}
-		if (!utf8_valid(payload.ap_ssid)) {
+		if (!bridge_config_text_valid(payload.ap_ssid)) {
 			(void)write_config_field_error(fd, "ap_ssid",
-						       "must be valid UTF-8");
+						       "must be printable UTF-8");
 			return;
 		}
 	}
@@ -990,8 +948,8 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	}
 
 	if ((fields & CONFIG_FIELD_HOSTNAME) != 0) {
-		bridge_config_get_system(&system);
-		strcpy(system.hostname, payload.hostname);
+		bridge_config_get_system(&sys_cfg);
+		strcpy(sys_cfg.hostname, payload.hostname);
 	}
 
 	if ((fields & CONFIG_FIELDS_AIS) != 0) {
@@ -1039,7 +997,7 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 		return;
 	}
 
-	if ((fields & CONFIG_FIELD_HOSTNAME) != 0 && bridge_config_set_system(&system) != 0) {
+	if ((fields & CONFIG_FIELD_HOSTNAME) != 0 && bridge_config_set_system(&sys_cfg) != 0) {
 		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
 					  "{\"ok\":false,\"errors\":{\"body\":\"saving system configuration failed\"}}\n");
 		return;

@@ -86,6 +86,51 @@ static inline bool bridge_config_tcp_client_host_valid(const char *host)
 }
 
 /*
+ * True when the string is strictly valid UTF-8 (rejects overlongs,
+ * surrogates, > U+10FFFF) and free of C0 control characters. Stored SSIDs
+ * are echoed by the config web API, where anything else would corrupt the
+ * JSON response or silently change on the next round trip.
+ */
+static inline bool bridge_config_text_valid(const char *s)
+{
+	const uint8_t *p = (const uint8_t *)s;
+
+	while (*p != 0U) {
+		uint8_t lead = *p;
+		size_t cont;
+
+		if (lead < 0x20U) {
+			return false;
+		} else if (lead < 0x80U) {
+			cont = 0U;
+		} else if ((lead & 0xE0U) == 0xC0U && lead >= 0xC2U) {
+			cont = 1U;
+		} else if ((lead & 0xF0U) == 0xE0U) {
+			if ((lead == 0xE0U && (p[1] & 0xE0U) == 0x80U) ||
+			    (lead == 0xEDU && (p[1] & 0xE0U) == 0xA0U)) {
+				return false;
+			}
+			cont = 2U;
+		} else if ((lead & 0xF8U) == 0xF0U && lead <= 0xF4U) {
+			if ((lead == 0xF0U && (p[1] & 0xF0U) == 0x80U) ||
+			    (lead == 0xF4U && p[1] > 0x8FU)) {
+				return false;
+			}
+			cont = 3U;
+		} else {
+			return false;
+		}
+		p++;
+		for (; cont > 0U; cont--, p++) {
+			if ((*p & 0xC0U) != 0x80U) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+/*
  * True for a DNS label usable as device hostname: 1..32 characters from
  * [a-z0-9-], neither starting nor ending with a hyphen.
  */

@@ -373,7 +373,9 @@ async function handleApSubmit(event) {
   const psk = pskClear ? '' : $('ap-psk').value;
   const ssidBytes = new TextEncoder().encode(ssid).length;
   const ssidError = ssidBytes < 1 || ssidBytes > 32 ? 'Enter an SSID of 1 to 32 bytes.' : '';
-  const pskError = staPskError(new TextEncoder().encode(psk).length);
+  const pskLength = new TextEncoder().encode(psk).length;
+  const pskError = pskLength !== 0 && (pskLength < 8 || pskLength > 63)
+    ? 'Enter a password of 8 to 63 characters, or leave blank.' : '';
 
   setFieldError('ap-ssid-error', ssidError);
   setFieldError('ap-psk-error', pskError);
@@ -391,12 +393,14 @@ async function handleApSubmit(event) {
   setApMessage('Saving…', 'warn');
 
   try {
-    await postConfig(body, (errors) => {
+    const payload = await postConfig(body, (errors) => {
       if (errors.ap_ssid) setFieldError('ap-ssid-error', `SSID ${errors.ap_ssid}.`);
       if (errors.ap_psk) setFieldError('ap-psk-error', `Password ${errors.ap_psk}.`);
       if (errors.ap_psk_clear) setFieldError('ap-psk-error', `Password ${errors.ap_psk_clear}.`);
     }, renderApConfig);
-    setApMessage('Saved. Reboot the bridge to apply the new access point settings.', 'ok');
+    setApMessage(payload.reboot_required
+      ? 'Saved. Reboot the bridge to apply the new access point settings.'
+      : 'Saved.', 'ok');
   } catch (error) {
     setApMessage(`Saving failed: ${error.message}.`, 'bad');
   }
@@ -425,10 +429,12 @@ async function handleSystemSubmit(event) {
   setSystemMessage('Saving…', 'warn');
 
   try {
-    await postConfig({ hostname }, (errors) => {
+    const payload = await postConfig({ hostname }, (errors) => {
       if (errors.hostname) setFieldError('system-hostname-error', `Hostname ${errors.hostname}.`);
     }, renderSystemConfig);
-    setSystemMessage('Saved. Reboot the bridge to apply the new hostname.', 'ok');
+    setSystemMessage(payload.reboot_required
+      ? 'Saved. Reboot the bridge to apply the new hostname.'
+      : 'Saved.', 'ok');
   } catch (error) {
     setSystemMessage(`Saving failed: ${error.message}.`, 'bad');
   }

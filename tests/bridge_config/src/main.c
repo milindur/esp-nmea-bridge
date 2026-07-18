@@ -70,6 +70,13 @@ static ssize_t failing_read_cb(void *cb_arg, void *data, size_t len)
 	return -EIO;
 }
 
+/* Short read: fills only half the record and reports that. */
+static ssize_t partial_read_cb(void *cb_arg, void *data, size_t len)
+{
+	memcpy(data, cb_arg, len / 2U);
+	return (ssize_t)(len / 2U);
+}
+
 static void count_listener(void)
 {
 	listener_count++;
@@ -781,6 +788,102 @@ ZTEST(bridge_config, test_set_ap_rejects_invalid_fields_without_saving)
 	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
 }
 
+ZTEST(bridge_config, test_stored_ap_with_embedded_nul_keeps_defaults)
+{
+	struct bridge_config_ap ap;
+	uint8_t record[AP_RECORD_LEN];
+
+	/* NUL as first PSK byte: would silently open the rescue AP. */
+	make_ap_record("SY Anna", "harbour99", record);
+	record[34] = 0U;
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	/* NUL as first SSID byte: SSID would become effectively empty. */
+	make_ap_record("SY Anna", "harbour99", record);
+	record[1] = 0U;
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+	zassert_str_equal(ap.psk, "ChangeMe1234");
+}
+
+ZTEST(bridge_config, test_stored_ap_with_invalid_utf8_ssid_keeps_defaults)
+{
+	struct bridge_config_ap ap;
+	uint8_t record[AP_RECORD_LEN];
+
+	make_ap_record("Boat\xFFNet", "harbour99", record);
+	zassert_equal(bridge_config_test_settings_set("ap", sizeof(record),
+						      stored_read_cb, record), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+}
+
+ZTEST(bridge_config, test_short_settings_read_keeps_defaults)
+{
+	struct bridge_config_ap ap;
+	struct bridge_config_sta sta;
+	uint8_t record[STA_RECORD_LEN];
+
+	make_ap_record("SY Anna", "harbour99", record);
+	zassert_equal(bridge_config_test_settings_set("ap", AP_RECORD_LEN,
+						      partial_read_cb, record), 0);
+
+	make_sta_record(true, true, "Marina", "harbour99", record);
+	zassert_equal(bridge_config_test_settings_set("sta", sizeof(record),
+						      partial_read_cb, record), 0);
+
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, "ESP-NMEA0183");
+	bridge_config_get_sta(&sta);
+	zassert_str_equal(sta.ssid, "BoatNet");
+}
+
+ZTEST(bridge_config, test_set_ap_rejects_non_printable_ssid)
+{
+	struct bridge_config_ap next;
+
+	fill_ap(&next, "Boat\xFFNet", "harbour99");
+	zassert_equal(bridge_config_set_ap(&next), -EINVAL);
+
+	fill_ap(&next, "Boat\aNet", "harbour99");
+	zassert_equal(bridge_config_set_ap(&next), -EINVAL);
+
+	zassert_equal(save_count, 0);
+}
+
+ZTEST(bridge_config, test_set_sta_rejects_non_printable_ssid)
+{
+	struct bridge_config_sta next;
+
+	fill_sta(&next, true, true, "Boat\xFFNet", "harbour99");
+	zassert_equal(bridge_config_set_sta(&next), -EINVAL);
+	zassert_equal(save_count, 0);
+}
+
+ZTEST(bridge_config, test_ap_max_length_fields_round_trip)
+{
+	static const char ssid_32[] = "12345678901234567890123456789012";
+	static const char psk_63[] =
+		"123456789012345678901234567890123456789012345678901234567890123";
+	struct bridge_config_ap next;
+	struct bridge_config_ap ap;
+
+	fill_ap(&next, ssid_32, psk_63);
+	zassert_equal(bridge_config_set_ap(&next), 0);
+	zassert_equal(save_count, 1);
+
+	zassert_equal(bridge_config_test_settings_set("ap", saved[0].len,
+						      stored_read_cb, saved[0].value), 0);
+	bridge_config_get_ap(&ap);
+	zassert_str_equal(ap.ssid, ssid_32);
+	zassert_str_equal(ap.psk, psk_63);
+}
+
 ZTEST(bridge_config, test_set_ap_unchanged_is_a_no_op)
 {
 	struct bridge_config_ap next;
@@ -886,6 +989,20 @@ ZTEST(bridge_config, test_malformed_stored_hostname_keeps_default)
 	make_sys_record("sy-anna", record);
 	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
 						      failing_read_cb, record), 0);
+
+	bridge_config_get_system(&system);
+	zassert_str_equal(system.hostname, "esp-nmea-bridge");
+}
+
+ZTEST(bridge_config, test_stored_hostname_with_embedded_nul_keeps_default)
+{
+	struct bridge_config_system system;
+	uint8_t record[SYS_RECORD_LEN];
+
+	make_sys_record("sy-anna", record);
+	record[3] = 0U; /* declared length 7, effective string "sy" */
+	zassert_equal(bridge_config_test_settings_set("sys", sizeof(record),
+						      stored_read_cb, record), 0);
 
 	bridge_config_get_system(&system);
 	zassert_str_equal(system.hostname, "esp-nmea-bridge");
