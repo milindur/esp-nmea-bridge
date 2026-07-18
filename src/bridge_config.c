@@ -12,13 +12,20 @@
 int bridge_config_test_settings_subsys_init(void);
 int bridge_config_test_settings_load_subtree(const char *subtree);
 int bridge_config_test_settings_save_one(const char *name, const void *value, size_t val_len);
+int bridge_config_test_settings_load_subtree_direct(const char *subtree,
+						    settings_load_direct_cb cb, void *param);
+int bridge_config_test_settings_delete(const char *name);
 #define cfg_settings_subsys_init bridge_config_test_settings_subsys_init
 #define cfg_settings_load_subtree bridge_config_test_settings_load_subtree
 #define cfg_settings_save_one bridge_config_test_settings_save_one
+#define cfg_settings_load_subtree_direct bridge_config_test_settings_load_subtree_direct
+#define cfg_settings_delete bridge_config_test_settings_delete
 #else
 #define cfg_settings_subsys_init settings_subsys_init
 #define cfg_settings_load_subtree settings_load_subtree
 #define cfg_settings_save_one settings_save_one
+#define cfg_settings_load_subtree_direct settings_load_subtree_direct
+#define cfg_settings_delete settings_delete
 #endif
 
 LOG_MODULE_REGISTER(bridge_config, LOG_LEVEL_INF);
@@ -212,6 +219,13 @@ static struct bridge_config_tcp_client tcp_client = {
 	.port = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT,
 };
 static bool reboot_required;
+/*
+ * After a factory reset the stored overrides are gone but the in-RAM values
+ * keep running until reboot. A later save that matches RAM would otherwise
+ * be skipped as unchanged and silently revert at the next boot, so once a
+ * reset happened every save persists until reboot.
+ */
+static bool factory_reset_pending;
 static K_MUTEX_DEFINE(config_lock);
 static bridge_config_listener_t listener;
 
@@ -370,8 +384,8 @@ int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = tcp_client.enabled != next->enabled || tcp_client.port != next->port ||
-		  strcmp(tcp_client.host, next->host) != 0;
+	changed = factory_reset_pending || tcp_client.enabled != next->enabled ||
+		  tcp_client.port != next->port || strcmp(tcp_client.host, next->host) != 0;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -428,7 +442,8 @@ int bridge_config_set_sta(const struct bridge_config_sta *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = sta.enabled != next->enabled || sta.rotate_mac != next->rotate_mac ||
+	changed = factory_reset_pending || sta.enabled != next->enabled ||
+		  sta.rotate_mac != next->rotate_mac ||
 		  strcmp(sta.ssid, next->ssid) != 0 || strcmp(sta.psk, next->psk) != 0;
 	k_mutex_unlock(&config_lock);
 
@@ -483,7 +498,8 @@ int bridge_config_set_ap(const struct bridge_config_ap *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = strcmp(ap.ssid, next->ssid) != 0 || strcmp(ap.psk, next->psk) != 0;
+	changed = factory_reset_pending || strcmp(ap.ssid, next->ssid) != 0 ||
+		  strcmp(ap.psk, next->psk) != 0;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -527,7 +543,7 @@ int bridge_config_set_system(const struct bridge_config_system *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = strcmp(system_cfg.hostname, next->hostname) != 0;
+	changed = factory_reset_pending || strcmp(system_cfg.hostname, next->hostname) != 0;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -544,6 +560,75 @@ int bridge_config_set_system(const struct bridge_config_system *next)
 	k_mutex_lock(&config_lock, K_FOREVER);
 	system_cfg = *next;
 	reboot_required = true;
+	k_mutex_unlock(&config_lock);
+	return 0;
+}
+
+/*
+ * One enumeration pass collects at most this many key names; more stored
+ * keys than that just take another delete-and-rescan pass.
+ */
+#define RESET_KEYS_PER_PASS 8U
+#define RESET_KEY_NAME_MAX 32U
+
+struct reset_key_batch {
+	char names[RESET_KEYS_PER_PASS][RESET_KEY_NAME_MAX + 1];
+	size_t count;
+	bool more;
+};
+
+static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_cb,
+			    void *cb_arg, void *param)
+{
+	struct reset_key_batch *batch = param;
+
+	ARG_UNUSED(len);
+	ARG_UNUSED(read_cb);
+	ARG_UNUSED(cb_arg);
+
+	if (strlen(key) > RESET_KEY_NAME_MAX) {
+		return -ENAMETOOLONG;
+	}
+	if (batch->count == ARRAY_SIZE(batch->names)) {
+		/* Stops this pass; the caller deletes the batch and rescans. */
+		batch->more = true;
+		return 1;
+	}
+	strcpy(batch->names[batch->count++], key);
+	return 0;
+}
+
+int bridge_config_factory_reset(void)
+{
+	struct reset_key_batch batch;
+	int ret;
+
+	do {
+		batch.count = 0;
+		batch.more = false;
+		ret = cfg_settings_load_subtree_direct(BRIDGE_CONFIG_SUBTREE,
+						       reset_collect_cb, &batch);
+		if (ret != 0 && !batch.more) {
+			LOG_ERR("Enumerating stored configuration failed: %d", ret);
+			return ret;
+		}
+		for (size_t i = 0; i < batch.count; i++) {
+			char name[sizeof(BRIDGE_CONFIG_SUBTREE) + RESET_KEY_NAME_MAX + 1];
+
+			(void)snprintk(name, sizeof(name), "%s/%s", BRIDGE_CONFIG_SUBTREE,
+				       batch.names[i]);
+			ret = cfg_settings_delete(name);
+			if (ret != 0) {
+				LOG_ERR("Deleting %s failed: %d", name, ret);
+				return ret;
+			}
+		}
+	} while (batch.more);
+
+	LOG_INF("Factory reset: stored configuration overrides deleted");
+	k_mutex_lock(&config_lock, K_FOREVER);
+	reboot_required = true;
+	factory_reset_pending = true;
 	k_mutex_unlock(&config_lock);
 	return 0;
 }
@@ -574,7 +659,8 @@ int bridge_config_set_ais(const struct bridge_config_ais *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = ais.filter_enabled != next->filter_enabled || ais.own_mmsi != next->own_mmsi;
+	changed = factory_reset_pending || ais.filter_enabled != next->filter_enabled ||
+		  ais.own_mmsi != next->own_mmsi;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -624,6 +710,7 @@ void bridge_config_test_reset(void)
 	strcpy(tcp_client.host, CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_HOST);
 	tcp_client.port = CONFIG_ESP_NMEA_BRIDGE_TCP_NMEA_CLIENT_PORT;
 	reboot_required = false;
+	factory_reset_pending = false;
 	listener = NULL;
 }
 #endif

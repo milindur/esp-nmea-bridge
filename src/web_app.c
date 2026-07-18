@@ -66,6 +66,7 @@ LOG_MODULE_REGISTER(web_app, LOG_LEVEL_INF);
 #define WEB_APP_OTA_UPLOAD_PATH "/api/ota/upload"
 #define WEB_APP_RECV_TIMEOUT_MS 5000
 #define WEB_APP_CONFIG_PATH "/api/config"
+#define WEB_APP_CONFIG_RESET_PATH "/api/config/reset"
 #define WEB_APP_REBOOT_PATH "/api/reboot"
 /* Must hold a combined POST of every field with escape-heavy strings. */
 #define WEB_APP_CONFIG_BODY_MAX 768
@@ -1006,6 +1007,16 @@ static void handle_config_update(int fd, char *request, size_t request_size,
 	(void)write_config_json(fd, "200 OK");
 }
 
+static void handle_config_reset(int fd)
+{
+	if (bridge_config_factory_reset() != 0) {
+		(void)write_text_response(fd, "500 Internal Server Error", "application/json",
+					  "{\"ok\":false,\"errors\":{\"body\":\"factory reset failed\"}}\n");
+		return;
+	}
+	(void)write_config_json(fd, "200 OK");
+}
+
 #ifndef CONFIG_ZTEST
 static void reboot_work_handler(struct k_work *work)
 {
@@ -1077,6 +1088,11 @@ static void handle_client(int fd)
 
 		if (token_equals(parsed.path, parsed.path_len, WEB_APP_CONFIG_PATH)) {
 			handle_config_update(fd, request, sizeof(request), &parsed);
+			return;
+		}
+
+		if (token_equals(parsed.path, parsed.path_len, WEB_APP_CONFIG_RESET_PATH)) {
+			handle_config_reset(fd);
 			return;
 		}
 

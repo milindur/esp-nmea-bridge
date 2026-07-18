@@ -204,6 +204,15 @@ void bridge_config_get_system(struct bridge_config_system *out);
  */
 int bridge_config_set_system(const struct bridge_config_system *system);
 
+/*
+ * Deletes every stored override below the bridge settings namespace —
+ * whatever the key, so future options are covered automatically — and marks
+ * a reboot as required. The effective in-RAM configuration keeps running
+ * until reboot; the next boot runs on the Kconfig defaults. Returns the
+ * first settings-layer error without marking a reboot.
+ */
+int bridge_config_factory_reset(void);
+
 /* True once a reboot-scope value changed since boot. */
 bool bridge_config_reboot_required(void);
 

@@ -235,6 +235,19 @@
           <button id="system-save" class="button" type="submit" disabled>Save</button>
           <p id="system-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
         </form>
+        <div class="danger-zone" role="group" aria-labelledby="factory-reset-title">
+          <h3 id="factory-reset-title">Danger zone</h3>
+          <p class="config-help">Factory reset erases every stored setting &mdash; Wi-Fi credentials, hostname, TCP client, and AIS filter. After the next reboot the bridge runs on its build-time defaults again.</p>
+          <button id="factory-reset-open" class="button button-danger" type="button" disabled>Factory reset&hellip;</button>
+          <div id="factory-reset-confirm" class="danger-confirm" hidden>
+            <p class="config-help"><strong>Erase all stored settings?</strong> This cannot be undone. The access point name and password may change after the reboot, so you may need to reconnect.</p>
+            <div class="danger-actions">
+              <button id="factory-reset-do" class="button button-danger" type="button">Erase everything</button>
+              <button id="factory-reset-cancel" class="button" type="button">Keep settings</button>
+            </div>
+          </div>
+          <p id="factory-reset-message" class="config-message" role="status" aria-live="polite"></p>
+        </div>
       </section>
     </section>
 

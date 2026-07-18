@@ -151,7 +151,8 @@ function updateConfigControls() {
   if (psk) psk.disabled = disabled || $('sta-psk-clear').checked;
   const apPsk = $('ap-psk');
   if (apPsk) apPsk.disabled = disabled || $('ap-psk-clear').checked;
-  for (const id of ['ais-save', 'sta-save', 'tcp-save', 'ap-save', 'system-save']) {
+  for (const id of ['ais-save', 'sta-save', 'tcp-save', 'ap-save', 'system-save',
+                    'factory-reset-open', 'factory-reset-do', 'factory-reset-cancel']) {
     const el = $(id);
     if (el) el.disabled = disabled;
   }
@@ -490,6 +491,37 @@ async function handleTcpSubmit(event) {
   updateConfigControls();
 }
 
+function setFactoryResetMessage(text, severity) { setFormMessage('factory-reset-message', text, severity); }
+
+function showFactoryResetConfirm(show) {
+  const confirm = $('factory-reset-confirm');
+  if (confirm) confirm.hidden = !show;
+  const open = $('factory-reset-open');
+  if (open) open.hidden = show;
+}
+
+async function handleFactoryReset() {
+  configSaving = true;
+  updateConfigControls();
+  setFactoryResetMessage('Erasing stored settings…', 'warn');
+
+  try {
+    const r = await fetch('/api/config/reset', { method: 'POST' });
+    const payload = await r.json().catch(() => null);
+    if (!r.ok) {
+      const errors = payload && payload.errors ? payload.errors : {};
+      throw new Error(Object.values(errors)[0] || `HTTP ${r.status}`);
+    }
+    renderConfig(payload || {});
+    showFactoryResetConfirm(false);
+    setFactoryResetMessage('All stored settings erased. Reboot to return to the build-time defaults.', 'ok');
+  } catch (error) {
+    setFactoryResetMessage(`Factory reset failed: ${error.message}.`, 'bad');
+  }
+  configSaving = false;
+  updateConfigControls();
+}
+
 async function handleReboot() {
   rebootInProgress = true;
   updateConfigControls();
@@ -527,6 +559,15 @@ function wireConfigUi() {
   if (apPskClear) apPskClear.addEventListener('change', updateConfigControls);
   const reboot = $('reboot-button');
   if (reboot) reboot.addEventListener('click', handleReboot);
+  const resetOpen = $('factory-reset-open');
+  if (resetOpen) resetOpen.addEventListener('click', () => {
+    showFactoryResetConfirm(true);
+    setFactoryResetMessage('');
+  });
+  const resetCancel = $('factory-reset-cancel');
+  if (resetCancel) resetCancel.addEventListener('click', () => showFactoryResetConfirm(false));
+  const resetDo = $('factory-reset-do');
+  if (resetDo) resetDo.addEventListener('click', handleFactoryReset);
   updateConfigControls();
 }
 

@@ -29,6 +29,15 @@ static int load_subtree_count;
 static char loaded_subtree[16];
 static int listener_count;
 
+/* Fake persistent keystore below "bridge/" for factory-reset enumeration. */
+#define FAKE_STORE_MAX_KEYS 12
+static char stored_keys[FAKE_STORE_MAX_KEYS][33];
+static int stored_key_count;
+static int delete_count;
+static int delete_ret;
+static int load_direct_count;
+static int load_direct_ret;
+
 int bridge_config_test_settings_subsys_init(void)
 {
 	subsys_init_count++;
@@ -54,6 +63,49 @@ int bridge_config_test_settings_save_one(const char *name, const void *value, si
 	}
 	save_count++;
 	return 0;
+}
+
+int bridge_config_test_settings_load_subtree_direct(const char *subtree,
+						    settings_load_direct_cb cb, void *param)
+{
+	load_direct_count++;
+	zassert_str_equal(subtree, "bridge");
+	if (load_direct_ret != 0) {
+		return load_direct_ret;
+	}
+	for (int i = 0; i < stored_key_count; i++) {
+		int ret = cb(stored_keys[i], 0U, NULL, NULL, param);
+
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	return 0;
+}
+
+int bridge_config_test_settings_delete(const char *name)
+{
+	if (delete_ret != 0) {
+		return delete_ret;
+	}
+	zassert_true(strncmp(name, "bridge/", 7U) == 0, "delete outside subtree: %s", name);
+	delete_count++;
+	for (int i = 0; i < stored_key_count; i++) {
+		if (strcmp(stored_keys[i], name + 7) == 0) {
+			memmove(&stored_keys[i], &stored_keys[i + 1],
+				(size_t)(stored_key_count - i - 1) * sizeof(stored_keys[0]));
+			stored_key_count--;
+			return 0;
+		}
+	}
+	zassert_unreachable("deleted unknown key %s", name);
+	return 0;
+}
+
+static void store_key(const char *name)
+{
+	zassert_true(stored_key_count < FAKE_STORE_MAX_KEYS);
+	strcpy(stored_keys[stored_key_count++], name);
 }
 
 static ssize_t stored_read_cb(void *cb_arg, void *data, size_t len)
@@ -109,6 +161,12 @@ static void reset_harness(void *fixture)
 	load_subtree_count = 0;
 	loaded_subtree[0] = '\0';
 	listener_count = 0;
+	memset(stored_keys, 0, sizeof(stored_keys));
+	stored_key_count = 0;
+	delete_count = 0;
+	delete_ret = 0;
+	load_direct_count = 0;
+	load_direct_ret = 0;
 	bridge_config_test_reset();
 }
 
@@ -1101,6 +1159,96 @@ ZTEST(bridge_config, test_set_system_does_not_notify_live_listener)
 	fill_system(&next, "sy-anna");
 	zassert_equal(bridge_config_set_system(&next), 0);
 	zassert_equal(listener_count, 0);
+}
+
+ZTEST(bridge_config, test_factory_reset_deletes_every_stored_key_generically)
+{
+	store_key("ais");
+	store_key("sta");
+	store_key("tcp");
+	store_key("ap");
+	store_key("sys");
+	store_key("future-option");
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+	zassert_equal(stored_key_count, 0);
+	zassert_equal(delete_count, 6);
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_without_stored_keys_still_flags_reboot)
+{
+	zassert_equal(bridge_config_factory_reset(), 0);
+	zassert_equal(delete_count, 0);
+	zassert_true(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_keeps_effective_values_until_reboot)
+{
+	struct bridge_config_ais ais;
+
+	zassert_equal(store_record(false, 211000000U), 0);
+	store_key("ais");
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+
+	bridge_config_get_ais(&ais);
+	zassert_false(ais.filter_enabled);
+	zassert_equal(ais.own_mmsi, 211000000U);
+}
+
+ZTEST(bridge_config, test_factory_reset_deletes_more_keys_than_one_pass_holds)
+{
+	char name[3] = "k0";
+
+	for (int i = 0; i < 10; i++) {
+		name[1] = (char)('0' + i);
+		store_key(name);
+	}
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+	zassert_equal(stored_key_count, 0);
+	zassert_equal(delete_count, 10);
+	zassert_true(load_direct_count >= 2);
+}
+
+ZTEST(bridge_config, test_factory_reset_delete_failure_propagates)
+{
+	store_key("ais");
+	delete_ret = -EIO;
+
+	zassert_equal(bridge_config_factory_reset(), -EIO);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_enumeration_failure_propagates)
+{
+	load_direct_ret = -EIO;
+
+	zassert_equal(bridge_config_factory_reset(), -EIO);
+	zassert_equal(delete_count, 0);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_save_after_factory_reset_persists_unchanged_values)
+{
+	struct bridge_config_ais ais = {
+		.filter_enabled = true,
+		.own_mmsi = TEST_DEFAULT_MMSI,
+	};
+	struct bridge_config_system system;
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+
+	/* Values equal the effective ones, but the stored overrides are gone:
+	 * skipping the save would silently revert them at the next boot.
+	 */
+	zassert_equal(bridge_config_set_ais(&ais), 0);
+	zassert_equal(save_count, 1);
+
+	bridge_config_get_system(&system);
+	zassert_equal(bridge_config_set_system(&system), 0);
+	zassert_equal(save_count, 2);
 }
 
 ZTEST_SUITE(bridge_config, NULL, NULL, reset_harness, NULL, NULL);

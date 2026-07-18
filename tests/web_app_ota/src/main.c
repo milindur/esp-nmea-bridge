@@ -70,6 +70,8 @@ static int system_set_ret;
 static bool fake_reboot_required;
 static int reboot_request_count;
 static bool reboot_after_response;
+static int factory_reset_count;
+static int factory_reset_ret;
 
 static void reset_harness(void)
 {
@@ -129,6 +131,8 @@ static void reset_harness(void)
 	fake_reboot_required = false;
 	reboot_request_count = 0;
 	reboot_after_response = false;
+	factory_reset_count = 0;
+	factory_reset_ret = 0;
 
 	memset(&fake_snapshot, 0, sizeof(fake_snapshot));
 	fake_snapshot.connection_state = BRIDGE_TELEMETRY_NMEA_CONNECTED;
@@ -325,6 +329,15 @@ int bridge_config_set_system(const struct bridge_config_system *sys)
 bool bridge_config_reboot_required(void)
 {
 	return fake_reboot_required;
+}
+
+int bridge_config_factory_reset(void)
+{
+	factory_reset_count++;
+	if (factory_reset_ret == 0) {
+		fake_reboot_required = true;
+	}
+	return factory_reset_ret;
 }
 
 void web_app_test_request_reboot(void)
@@ -1385,6 +1398,42 @@ ZTEST(web_app_config_api, test_post_combined_ap_and_hostname_saves_both)
 	zassert_str_equal(last_set_ap.ssid, "SY Anna");
 	zassert_str_equal(last_set_ap.psk, "harbour99");
 	zassert_str_equal(last_set_system.hostname, "sy-anna");
+}
+
+ZTEST(web_app_config_api, test_post_config_reset_reports_reboot_required)
+{
+	reset_harness();
+	set_request("POST /api/config/reset HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(factory_reset_count, 1);
+	zassert_true(response_contains("\"reboot_required\":true"));
+}
+
+ZTEST(web_app_config_api, test_post_config_reset_failure_returns_500)
+{
+	reset_harness();
+	factory_reset_ret = -EIO;
+	set_request("POST /api/config/reset HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 500 Internal Server Error"));
+	zassert_true(response_contains("factory reset failed"));
+	zassert_equal(factory_reset_count, 1);
+}
+
+ZTEST(web_app_config_api, test_get_config_reset_is_not_found)
+{
+	reset_harness();
+	set_request("GET /api/config/reset HTTP/1.1\r\n\r\n");
+
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 404 Not Found"));
+	zassert_equal(factory_reset_count, 0);
 }
 
 ZTEST_SUITE(web_app_config_api, NULL, NULL, NULL, NULL, NULL);
