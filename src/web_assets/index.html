@@ -114,6 +114,7 @@
         <button id="reboot-button" class="button" type="button">Reboot now</button>
       </div>
 
+      <div class="config-grid">
       <section class="panel" aria-labelledby="sta-config-title">
         <header class="panel-header">
           <h2 id="sta-config-title">Wi-Fi station</h2>
@@ -143,8 +144,10 @@
             <input id="sta-rotate-mac" type="checkbox">
             <span>Randomise MAC address on every boot</span>
           </label>
-          <button id="sta-save" class="button" type="submit" disabled>Save</button>
-          <p id="sta-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          <div class="config-actions">
+            <button id="sta-save" class="button" type="submit" disabled>Save</button>
+            <p id="sta-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          </div>
         </form>
       </section>
 
@@ -169,8 +172,10 @@
             <input id="ap-psk-clear" type="checkbox">
             <span>Remove stored password (open access point)</span>
           </label>
-          <button id="ap-save" class="button" type="submit" disabled>Save</button>
-          <p id="ap-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          <div class="config-actions">
+            <button id="ap-save" class="button" type="submit" disabled>Save</button>
+            <p id="ap-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          </div>
         </form>
       </section>
 
@@ -184,19 +189,23 @@
             <input id="tcp-enabled" type="checkbox">
             <span>Enable TCP NMEA client</span>
           </label>
-          <label class="config-field" for="tcp-host">
-            <span class="label">Target IPv4 address</span>
-            <input id="tcp-host" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the Wi-Fi gateway">
-            <span id="tcp-host-error" class="config-error" role="alert" hidden></span>
-          </label>
-          <label class="config-field" for="tcp-port">
-            <span class="label">Target port</span>
-            <input id="tcp-port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false">
-            <span id="tcp-port-error" class="config-error" role="alert" hidden></span>
-          </label>
+          <div class="config-row">
+            <label class="config-field" for="tcp-host">
+              <span class="label">Target IPv4 address</span>
+              <input id="tcp-host" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="Leave blank to use the Wi-Fi gateway">
+              <span id="tcp-host-error" class="config-error" role="alert" hidden></span>
+            </label>
+            <label class="config-field config-field-port" for="tcp-port">
+              <span class="label">Target port</span>
+              <input id="tcp-port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false">
+              <span id="tcp-port-error" class="config-error" role="alert" hidden></span>
+            </label>
+          </div>
           <p id="tcp-sta-hint" class="config-message is-warn" role="status" hidden>Wi-Fi station mode is disabled, so the client has no network to connect through. The setting is stored anyway.</p>
-          <button id="tcp-save" class="button" type="submit" disabled>Save</button>
-          <p id="tcp-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          <div class="config-actions">
+            <button id="tcp-save" class="button" type="submit" disabled>Save</button>
+            <p id="tcp-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          </div>
         </form>
       </section>
 
@@ -210,21 +219,24 @@
             <input id="ais-enabled" type="checkbox">
             <span>Enable AIS self-MMSI filter</span>
           </label>
-          <label class="config-field" for="ais-mmsi">
+          <label class="config-field config-field-mmsi" for="ais-mmsi">
             <span class="label">Own MMSI</span>
             <input id="ais-mmsi" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="0 leaves the filter inactive">
             <span id="ais-mmsi-error" class="config-error" role="alert" hidden></span>
           </label>
-          <button id="ais-save" class="button" type="submit" disabled>Save</button>
-          <p id="ais-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          <div class="config-actions">
+            <button id="ais-save" class="button" type="submit" disabled>Save</button>
+            <p id="ais-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          </div>
         </form>
       </section>
 
-      <section class="panel" aria-labelledby="system-config-title">
+      <section class="panel panel-system" aria-labelledby="system-config-title">
         <header class="panel-header">
           <h2 id="system-config-title">System</h2>
           <span id="system-reboot-badge" class="badge state-warn" hidden>Reboot required</span>
         </header>
+        <div class="system-columns">
         <form id="system-config-form" class="config-form" aria-describedby="system-config-help">
           <p id="system-config-help" class="config-help">The bridge's name on the network: it appears in your router's client list and, with mDNS enabled, the web app is reachable at http://&lt;hostname&gt;.local. Takes effect after the next reboot.</p>
           <label class="config-field" for="system-hostname">
@@ -232,8 +244,10 @@
             <input id="system-hostname" type="text" autocomplete="off" spellcheck="false" maxlength="32" placeholder="lowercase letters, digits, hyphens">
             <span id="system-hostname-error" class="config-error" role="alert" hidden></span>
           </label>
-          <button id="system-save" class="button" type="submit" disabled>Save</button>
-          <p id="system-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          <div class="config-actions">
+            <button id="system-save" class="button" type="submit" disabled>Save</button>
+            <p id="system-config-message" class="config-message" role="status" aria-live="polite">Loading configuration&hellip;</p>
+          </div>
         </form>
         <div class="danger-zone" role="group" aria-labelledby="factory-reset-title">
           <h3 id="factory-reset-title">Danger zone</h3>
@@ -248,7 +262,9 @@
           </div>
           <p id="factory-reset-message" class="config-message" role="status" aria-live="polite"></p>
         </div>
+        </div>
       </section>
+      </div>
     </section>
 
     <section id="view-ota" role="tabpanel" aria-labelledby="tab-ota" hidden>

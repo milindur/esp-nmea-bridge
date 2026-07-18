@@ -457,13 +457,54 @@ body {
 .ota-message.is-warn { color: var(--warn); }
 .ota-message.is-bad { color: var(--bad); }
 
+/* Configuration view */
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-grid > .panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-system { grid-column: 1 / -1; }
+
+.system-columns {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+}
+
 .config-form {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 14px;
   padding: 18px;
-  max-width: 480px;
 }
+
+.config-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8em;
+  gap: 14px;
+  align-items: start;
+}
+
+.config-field-mmsi input { max-width: 12em; }
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+.config-actions .config-message { flex: 1 1 12em; }
 
 .config-help,
 .config-message {
@@ -480,10 +521,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin: 0 18px 18px;
+  margin: 18px 18px 18px 0;
   padding: 14px;
-  max-width: 480px;
-  box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--border));
   border-radius: 8px;
 }
@@ -621,6 +660,9 @@ body {
 
 @media (max-width: 700px) {
   .conn-grid { grid-template-columns: 1fr; }
+  .config-grid { grid-template-columns: 1fr; }
+  .system-columns { grid-template-columns: 1fr; }
+  .system-columns .danger-zone { margin: 0 18px 18px; }
   .ota-grid { grid-template-columns: 1fr; }
   .ota-upload { border-right: 0; border-bottom: 1px solid var(--border); }
   .diag-grid { grid-template-columns: 1fr; }
@@ -630,6 +672,7 @@ body {
 
 @media (max-width: 480px) {
   .counter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .config-row { grid-template-columns: 1fr; }
   .ota-status { grid-template-columns: 1fr; }
   .ota-status div:nth-child(odd) { border-right: 0; }
 }
