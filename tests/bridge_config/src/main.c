@@ -31,12 +31,12 @@ static int listener_count;
 
 /* Fake persistent keystore below "bridge/" for factory-reset enumeration. */
 #define FAKE_STORE_MAX_KEYS 12
-static char stored_keys[FAKE_STORE_MAX_KEYS][33];
+static char stored_keys[FAKE_STORE_MAX_KEYS][SETTINGS_MAX_NAME_LEN + 16];
 static int stored_key_count;
 static int delete_count;
-static int delete_ret;
+/* Index of the delete call that fails with -EIO; -1 means none fails. */
+static int delete_fail_at;
 static int load_direct_count;
-static int load_direct_ret;
 
 int bridge_config_test_settings_subsys_init(void)
 {
@@ -65,19 +65,18 @@ int bridge_config_test_settings_save_one(const char *name, const void *value, si
 	return 0;
 }
 
+/*
+ * Faithful to Zephyr: a nonzero callback return stops the iteration (as the
+ * NVS backend does), but the API itself always reports success.
+ */
 int bridge_config_test_settings_load_subtree_direct(const char *subtree,
 						    settings_load_direct_cb cb, void *param)
 {
 	load_direct_count++;
 	zassert_str_equal(subtree, "bridge");
-	if (load_direct_ret != 0) {
-		return load_direct_ret;
-	}
 	for (int i = 0; i < stored_key_count; i++) {
-		int ret = cb(stored_keys[i], 0U, NULL, NULL, param);
-
-		if (ret != 0) {
-			return ret;
+		if (cb(stored_keys[i], 0U, NULL, NULL, param) != 0) {
+			break;
 		}
 	}
 	return 0;
@@ -85,8 +84,8 @@ int bridge_config_test_settings_load_subtree_direct(const char *subtree,
 
 int bridge_config_test_settings_delete(const char *name)
 {
-	if (delete_ret != 0) {
-		return delete_ret;
+	if (delete_count == delete_fail_at) {
+		return -EIO;
 	}
 	zassert_true(strncmp(name, "bridge/", 7U) == 0, "delete outside subtree: %s", name);
 	delete_count++;
@@ -164,9 +163,8 @@ static void reset_harness(void *fixture)
 	memset(stored_keys, 0, sizeof(stored_keys));
 	stored_key_count = 0;
 	delete_count = 0;
-	delete_ret = 0;
+	delete_fail_at = -1;
 	load_direct_count = 0;
-	load_direct_ret = 0;
 	bridge_config_test_reset();
 }
 
@@ -1215,19 +1213,74 @@ ZTEST(bridge_config, test_factory_reset_deletes_more_keys_than_one_pass_holds)
 ZTEST(bridge_config, test_factory_reset_delete_failure_propagates)
 {
 	store_key("ais");
-	delete_ret = -EIO;
-
-	zassert_equal(bridge_config_factory_reset(), -EIO);
-	zassert_false(bridge_config_reboot_required());
-}
-
-ZTEST(bridge_config, test_factory_reset_enumeration_failure_propagates)
-{
-	load_direct_ret = -EIO;
+	delete_fail_at = 0;
 
 	zassert_equal(bridge_config_factory_reset(), -EIO);
 	zassert_equal(delete_count, 0);
 	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_partial_delete_still_flags_reboot)
+{
+	struct bridge_config_ais ais;
+
+	store_key("ais");
+	store_key("sta");
+	delete_fail_at = 1;
+
+	zassert_equal(bridge_config_factory_reset(), -EIO);
+	zassert_equal(delete_count, 1);
+	/* One override is already gone, so a reboot changes behaviour... */
+	zassert_true(bridge_config_reboot_required());
+
+	/* ...and later saves must persist even when they match RAM. */
+	bridge_config_get_ais(&ais);
+	zassert_equal(bridge_config_set_ais(&ais), 0);
+	zassert_equal(save_count, 1);
+}
+
+ZTEST(bridge_config, test_factory_reset_reports_corrupt_overlong_key)
+{
+	char long_key[SETTINGS_MAX_NAME_LEN + 2];
+
+	memset(long_key, 'x', sizeof(long_key) - 1U);
+	long_key[sizeof(long_key) - 1U] = '\0';
+	store_key(long_key);
+
+	zassert_equal(bridge_config_factory_reset(), -ENAMETOOLONG);
+	zassert_equal(delete_count, 0);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_factory_reset_then_reboot_runs_on_kconfig_defaults)
+{
+	struct bridge_config_ais ais;
+
+	zassert_equal(store_record(false, 211000000U), 0);
+	store_key("ais");
+	zassert_equal(bridge_config_factory_reset(), 0);
+
+	/* Reboot: fresh RAM state, loading from the now-empty store. */
+	bridge_config_test_reset();
+	zassert_equal(bridge_config_init(), 0);
+
+	bridge_config_get_ais(&ais);
+	zassert_true(ais.filter_enabled);
+	zassert_equal(ais.own_mmsi, TEST_DEFAULT_MMSI);
+	zassert_false(bridge_config_reboot_required());
+}
+
+ZTEST(bridge_config, test_forced_save_after_reset_does_not_notify_listener)
+{
+	struct bridge_config_tcp_client tcp;
+
+	zassert_equal(bridge_config_factory_reset(), 0);
+	bridge_config_set_listener(count_listener);
+
+	bridge_config_get_tcp_client(&tcp);
+	zassert_equal(bridge_config_set_tcp_client(&tcp), 0);
+	zassert_equal(save_count, 1);
+	zassert_equal(listener_count, 0);
 }
 
 ZTEST(bridge_config, test_save_after_factory_reset_persists_unchanged_values)

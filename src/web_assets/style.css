@@ -502,6 +502,9 @@ body {
   gap: 12px;
 }
 
+/* display:flex would defeat the hidden attribute that gates confirmation. */
+.danger-confirm[hidden] { display: none; }
+
 .danger-actions {
   display: flex;
   gap: 10px;

@@ -209,7 +209,10 @@ int bridge_config_set_system(const struct bridge_config_system *system);
  * whatever the key, so future options are covered automatically — and marks
  * a reboot as required. The effective in-RAM configuration keeps running
  * until reboot; the next boot runs on the Kconfig defaults. Returns the
- * first settings-layer error without marking a reboot.
+ * first delete or enumeration-callback error; backend read errors during
+ * enumeration are invisible because settings_load_subtree_direct() always
+ * reports success. A reboot stays marked if the failed reset already
+ * deleted overrides.
  */
 int bridge_config_factory_reset(void);
 

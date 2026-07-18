@@ -1412,6 +1412,22 @@ ZTEST(web_app_config_api, test_post_config_reset_reports_reboot_required)
 	zassert_true(response_contains("\"reboot_required\":true"));
 }
 
+ZTEST(web_app_config_api, test_post_config_reset_twice_stays_ok)
+{
+	reset_harness();
+	set_request("POST /api/config/reset HTTP/1.1\r\n\r\n");
+	web_app_test_handle_client(1);
+
+	memset(&sock, 0, sizeof(sock));
+	sock.send_fail_at = -1;
+	set_request("POST /api/config/reset HTTP/1.1\r\n\r\n");
+	web_app_test_handle_client(1);
+
+	zassert_true(response_contains("HTTP/1.1 200 OK"));
+	zassert_equal(factory_reset_count, 2);
+	zassert_true(response_contains("\"reboot_required\":true"));
+}
+
 ZTEST(web_app_config_api, test_post_config_reset_failure_returns_500)
 {
 	reset_harness();

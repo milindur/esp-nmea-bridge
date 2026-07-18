@@ -512,7 +512,10 @@ async function handleFactoryReset() {
       const errors = payload && payload.errors ? payload.errors : {};
       throw new Error(Object.values(errors)[0] || `HTTP ${r.status}`);
     }
-    renderConfig(payload || {});
+    // A 200 without parseable JSON still means the reset happened; only
+    // re-render the forms when real config data came back.
+    if (payload) renderConfig(payload);
+    else renderRebootRequired(true);
     showFactoryResetConfirm(false);
     setFactoryResetMessage('All stored settings erased. Reboot to return to the build-time defaults.', 'ok');
   } catch (error) {

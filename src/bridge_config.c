@@ -375,6 +375,7 @@ void bridge_config_get_tcp_client(struct bridge_config_tcp_client *out)
 int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *next)
 {
 	uint8_t record[TCP_RECORD_LEN];
+	bool value_changed;
 	bool changed;
 	int ret;
 
@@ -384,8 +385,9 @@ int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = factory_reset_pending || tcp_client.enabled != next->enabled ||
-		  tcp_client.port != next->port || strcmp(tcp_client.host, next->host) != 0;
+	value_changed = tcp_client.enabled != next->enabled || tcp_client.port != next->port ||
+			strcmp(tcp_client.host, next->host) != 0;
+	changed = factory_reset_pending || value_changed;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -403,7 +405,10 @@ int bridge_config_set_tcp_client(const struct bridge_config_tcp_client *next)
 	tcp_client = *next;
 	k_mutex_unlock(&config_lock);
 
-	if (listener != NULL) {
+	/* A save forced by a pending factory reset changed nothing effective,
+	 * so it must not bounce live consumers.
+	 */
+	if (value_changed && listener != NULL) {
 		listener();
 	}
 	return 0;
@@ -566,15 +571,22 @@ int bridge_config_set_system(const struct bridge_config_system *next)
 
 /*
  * One enumeration pass collects at most this many key names; more stored
- * keys than that just take another delete-and-rescan pass.
+ * keys than that just take another delete-and-rescan pass. Any name the
+ * settings core accepts fits a slot, so no legal key can escape deletion.
  */
 #define RESET_KEYS_PER_PASS 8U
-#define RESET_KEY_NAME_MAX 32U
+#define RESET_KEY_NAME_MAX SETTINGS_MAX_NAME_LEN
 
 struct reset_key_batch {
 	char names[RESET_KEYS_PER_PASS][RESET_KEY_NAME_MAX + 1];
 	size_t count;
 	bool more;
+	/*
+	 * settings_load_subtree_direct() discards both the backend's and the
+	 * callback's return value and always returns 0, so errors must travel
+	 * through the batch itself to reach the caller.
+	 */
+	int err;
 };
 
 static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_cb,
@@ -587,6 +599,8 @@ static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_c
 	ARG_UNUSED(cb_arg);
 
 	if (strlen(key) > RESET_KEY_NAME_MAX) {
+		/* Corrupt store: skipping it silently would fake a full reset. */
+		batch->err = -ENAMETOOLONG;
 		return -ENAMETOOLONG;
 	}
 	if (batch->count == ARRAY_SIZE(batch->names)) {
@@ -598,19 +612,23 @@ static int reset_collect_cb(const char *key, size_t len, settings_read_cb read_c
 	return 0;
 }
 
+/* Only called from the single web server thread, like the setters. */
 int bridge_config_factory_reset(void)
 {
 	struct reset_key_batch batch;
-	int ret;
+	bool any_deleted = false;
+	int ret = 0;
 
 	do {
 		batch.count = 0;
 		batch.more = false;
-		ret = cfg_settings_load_subtree_direct(BRIDGE_CONFIG_SUBTREE,
+		batch.err = 0;
+		(void)cfg_settings_load_subtree_direct(BRIDGE_CONFIG_SUBTREE,
 						       reset_collect_cb, &batch);
-		if (ret != 0 && !batch.more) {
-			LOG_ERR("Enumerating stored configuration failed: %d", ret);
-			return ret;
+		if (batch.err != 0) {
+			LOG_ERR("Enumerating stored configuration failed: %d", batch.err);
+			ret = batch.err;
+			break;
 		}
 		for (size_t i = 0; i < batch.count; i++) {
 			char name[sizeof(BRIDGE_CONFIG_SUBTREE) + RESET_KEY_NAME_MAX + 1];
@@ -620,17 +638,27 @@ int bridge_config_factory_reset(void)
 			ret = cfg_settings_delete(name);
 			if (ret != 0) {
 				LOG_ERR("Deleting %s failed: %d", name, ret);
-				return ret;
+				break;
 			}
+			any_deleted = true;
 		}
-	} while (batch.more);
+	} while (ret == 0 && batch.more);
 
-	LOG_INF("Factory reset: stored configuration overrides deleted");
-	k_mutex_lock(&config_lock, K_FOREVER);
-	reboot_required = true;
-	factory_reset_pending = true;
-	k_mutex_unlock(&config_lock);
-	return 0;
+	/*
+	 * Even a failed reset may have deleted overrides already, so the
+	 * sticky flags must reflect any successful delete — otherwise a later
+	 * "unchanged" save would be skipped and silently revert at boot.
+	 */
+	if (ret == 0 || any_deleted) {
+		k_mutex_lock(&config_lock, K_FOREVER);
+		reboot_required = true;
+		factory_reset_pending = true;
+		k_mutex_unlock(&config_lock);
+	}
+	if (ret == 0) {
+		LOG_INF("Factory reset: stored configuration overrides deleted");
+	}
+	return ret;
 }
 
 bool bridge_config_reboot_required(void)
@@ -651,6 +679,7 @@ void bridge_config_set_listener(bridge_config_listener_t new_listener)
 int bridge_config_set_ais(const struct bridge_config_ais *next)
 {
 	uint8_t record[AIS_RECORD_LEN];
+	bool value_changed;
 	bool changed;
 	int ret;
 
@@ -659,8 +688,9 @@ int bridge_config_set_ais(const struct bridge_config_ais *next)
 	}
 
 	k_mutex_lock(&config_lock, K_FOREVER);
-	changed = factory_reset_pending || ais.filter_enabled != next->filter_enabled ||
-		  ais.own_mmsi != next->own_mmsi;
+	value_changed = ais.filter_enabled != next->filter_enabled ||
+			ais.own_mmsi != next->own_mmsi;
+	changed = factory_reset_pending || value_changed;
 	k_mutex_unlock(&config_lock);
 
 	if (!changed) {
@@ -678,7 +708,7 @@ int bridge_config_set_ais(const struct bridge_config_ais *next)
 	ais = *next;
 	k_mutex_unlock(&config_lock);
 
-	if (listener != NULL) {
+	if (value_changed && listener != NULL) {
 		listener();
 	}
 	return 0;
