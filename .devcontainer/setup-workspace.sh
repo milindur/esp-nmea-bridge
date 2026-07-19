@@ -30,18 +30,6 @@ else
   echo "Run this when west.yml changes: bash ${APP}/.devcontainer/update-workspace.sh"
 fi
 
-west zephyr-export
-
-# Keep Python dependencies in sync with the cached Zephyr checkout. This is
-# intentionally outside the first-run branch because the Docker image/Python venv
-# may be rebuilt while the persistent west volume already contains zephyr/.
-pip install -r zephyr/scripts/requirements.txt
-west packages pip --install
-
-# Fetcher backends used by Zephyr blobs depend on packages installed above
-# (notably requests/jsonschema), so keep this after Python dependency sync. Run it
-# on every setup so a failed first run does not leave the cached workspace without
-# required ESP-IDF blobs.
-west blobs fetch hal_espressif
+bash "${APP_DIR}/.devcontainer/sync-workspace.sh"
 
 west topdir

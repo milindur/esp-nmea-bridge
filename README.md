@@ -72,8 +72,8 @@ pip install --upgrade pip west
 
 west init -m https://github.com/milindur/esp-nmea-bridge.git --mr main
 west update
-west zephyr-export
 pip install -r zephyr/scripts/requirements.txt
+west zephyr-export
 west blobs fetch hal_espressif
 ```
 
@@ -134,7 +134,7 @@ This repository includes a VS Code Dev Container for a hybrid Zephyr workspace:
 
 - the app repository is bind-mounted from the host, so normal host-side Git workflows keep working;
 - the Zephyr workspace parent, `.west/`, `zephyr/`, and modules live in the persistent Docker volume `esp-nmea-bridge-west-workspace`; build artifacts go to `build/` inside the bind-mounted app repository and are therefore accessible from the host;
-- the container image provides the Zephyr SDK, Python environment, `west`, CMake, Ninja, `clangd`, `ccache`, and serial helper tools.
+- the container image provides the Python environment, `west`, CMake, Ninja, `clangd`, `ccache`, and serial helper tools; the Zephyr SDK is installed into the persistent workspace volume by the setup and update scripts, with the version taken from the `SDK_VERSION` file of the Zephyr checkout pinned in `west.yml`.
 
 Open `esp-nmea-bridge/` in VS Code and run **Dev Containers: Reopen in Container**. On first creation, `.devcontainer/setup-workspace.sh` initializes the workspace and fetches Zephyr projects and Espressif blobs. Later starts reuse the Docker volume and do not run `west update` automatically.
 
@@ -144,13 +144,13 @@ When `west.yml` changes, update the cached workspace manually:
 bash .devcontainer/update-workspace.sh
 ```
 
-If a rebuilt container reports missing Python tools such as `jsonschema` or `esptool`, rerun the setup script inside the container:
+If container creation fails partway (for example a network error during the Zephyr fetch or SDK download), rerun the setup script inside the container; it is idempotent and resumes cleanly:
 
 ```sh
 bash .devcontainer/setup-workspace.sh
 ```
 
-The container runs as the `vscode` user with `updateRemoteUserUID` enabled, so files created in the bind-mounted app repository use the host user's UID/GID instead of becoming root-owned. Deleting the Docker volume removes the cached Zephyr checkout, modules, and `.west/`, but not the host-mounted app repository or its `build/` directory.
+The container runs as the `vscode` user with `updateRemoteUserUID` enabled, so files created in the bind-mounted app repository use the host user's UID/GID instead of becoming root-owned. Deleting the Docker volume removes the cached Zephyr checkout, modules, `.west/`, and the installed Zephyr SDK, but not the host-mounted app repository or its `build/` directory. When a Zephyr upgrade bumps the SDK version, superseded `zephyr-sdk-*` directories stay in the volume and can be deleted manually.
 
 ## Build
 

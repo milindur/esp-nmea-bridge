@@ -2,10 +2,11 @@
 set -euo pipefail
 
 WORKSPACE=/workspaces/esp-nmea-bridge-workspace
+APP=esp-nmea-bridge
+APP_DIR=${WORKSPACE}/${APP}
 
 cd "${WORKSPACE}"
+
 west update
-west zephyr-export
-pip install -r zephyr/scripts/requirements.txt
-west packages pip --install
-west blobs fetch hal_espressif
+
+bash "${APP_DIR}/.devcontainer/sync-workspace.sh"
